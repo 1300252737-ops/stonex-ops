@@ -1,0 +1,25 @@
+[project]
+name = "stonex-ops"
+version = "0.1.0"
+description = "StoneX ops MCP server - standalone diagnostics via stonx ctl --output json"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+]
+
+[project.scripts]
+stonex-ops = "stonex_ops.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
