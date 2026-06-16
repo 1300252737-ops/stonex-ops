@@ -1,0 +1,20 @@
+[package]
+name = "stonex-ops"
+version = "0.1.0"
+edition = "2021"
+description = "StoneX 运维 MCP 工具:独立的运维诊断和监控进程,通过 stonx ctl --output json 间接访问系统状态"
+
+[[bin]]
+name = "stonex-ops"
+path = "src/main.rs"
+
+[dependencies]
+rmcp = { version = "1.7", features = ["server", "transport-io", "macros"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "process"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+chrono = { version = "0.4", features = ["clock", "serde"] }
+schemars = "1"
+uuid = { version = "1", features = ["v4"] }
