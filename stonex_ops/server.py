@@ -101,7 +101,8 @@ TOOL_DEFINITIONS: list[Tool] = [
         name="ops_probe_connections",
         description=(
             "Run connection probes for a tenant (or all tenants): "
-            "XHS API, ERP, runtime, and freshness checks. "
+            "provider, freshness, report readiness, AI model ping, "
+            "and mail transport checks. "
             "This is the ONLY tool that triggers `stonx ctl probe`, "
             "which may write `ops.connection_probe_state` through stonx "
             "(stonex-ops itself never connects to the database)."

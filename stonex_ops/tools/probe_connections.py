@@ -1,6 +1,8 @@
-"""probe_connections: run connection probes for a tenant (or all tenants).
+"""probe_connections: run connection probes for a tenant or all tenants.
 
-Supported probe types: xhs-api, jst, wangdian, xhs-live, freshness.
+The stonx CLI owns the probe catalog. stonex-ops intentionally passes through
+all returned connection IDs, including provider, freshness, report, AI, and
+mail readiness checks.
 
 This is the ONLY tool that triggers `stonx ctl probe`, which may write
 `ops.connection_probe_state` through stonx.

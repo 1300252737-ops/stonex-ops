@@ -11,7 +11,7 @@ Key principles:
 - No direct database connection, no dependency on stonex source.
 - Only calls `stonx ctl ... --output json` contracts.
 - Command allowlist + input validation + audit log + output redaction.
-- First phase: read-only diagnostics.
+- Read-only diagnostics plus one explicit active probe boundary.
 
 Probe boundary: only `ops_probe_connections` triggers
 `stonx ctl probe`, which may record `ops.connection_probe_state`

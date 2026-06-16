@@ -62,16 +62,16 @@ TENANT_SHOW_NO_SHOP_JSON = """{
 }"""
 
 PROBE_JSON = """{
-    "result": "problems_found",
-    "check_count": 3,
-    "problem_count": 2,
+    "result": "failed",
+    "check_count": 4,
+    "problem_count": 3,
     "scopes": [
         {
             "tenant": "tn_a",
             "shop_id": "shop-a",
             "tenant_tag": "customer-a",
             "shop_label": "Flagship",
-            "problem_count": 1,
+            "problem_count": 3,
             "connections": [
                 {
                     "connection_id": "xhs-api",
@@ -81,6 +81,36 @@ PROBE_JSON = """{
                     "checked_at": "2026-06-16T08:00:00Z",
                     "last_success_at": "2026-06-16T07:00:00Z",
                     "latency_ms": 234,
+                    "detail": []
+                },
+                {
+                    "connection_id": "report",
+                    "status": "needs_action",
+                    "reason_code": "missing_release",
+                    "message": "Report is not ready.",
+                    "checked_at": "2026-06-16T08:00:00Z",
+                    "last_success_at": null,
+                    "latency_ms": 12,
+                    "detail": []
+                },
+                {
+                    "connection_id": "ai",
+                    "status": "ok",
+                    "reason_code": "",
+                    "message": "",
+                    "checked_at": "2026-06-16T08:00:00Z",
+                    "last_success_at": "2026-06-16T08:00:00Z",
+                    "latency_ms": 721,
+                    "detail": []
+                },
+                {
+                    "connection_id": "mail",
+                    "status": "needs_action",
+                    "reason_code": "smtp_unavailable",
+                    "message": "Mail transport is unavailable.",
+                    "checked_at": "2026-06-16T08:00:00Z",
+                    "last_success_at": null,
+                    "latency_ms": 88,
                     "detail": []
                 }
             ]
@@ -171,11 +201,15 @@ def test_tenant_show_includes_scope_error_fields():
 
 def test_parses_probe_shape():
     data = json.loads(PROBE_JSON)
-    assert data["result"] == "problems_found"
-    assert data["check_count"] == 3
-    assert data["problem_count"] == 2
+    assert data["result"] == "failed"
+    assert data["check_count"] == 4
+    assert data["problem_count"] == 3
     assert data["scopes"][0]["shop_id"] == "shop-a"
     assert data["scopes"][0]["tenant"] == "tn_a"
+    connection_ids = {
+        conn["connection_id"] for conn in data["scopes"][0]["connections"]
+    }
+    assert {"report", "ai", "mail"}.issubset(connection_ids)
 
 
 def test_parses_worker_job_list_wrapper():

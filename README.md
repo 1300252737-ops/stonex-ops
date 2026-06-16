@@ -74,10 +74,10 @@ Claude Code MCP config:
 | `ops_env_check` | Verify stonx binary reachable, show version. Does NOT run probe. |
 | `ops_tenant_list` | List all tenants with identity/status/connection summary. |
 | `ops_tenant_show` | Show a tenant's detailed onboarding and connection state. |
-| `ops_probe_connections` | Run connection probes (may write probe state through stonx). |
+| `ops_probe_connections` | Run provider, freshness, report, AI, and mail probes (may write probe state through stonx). |
 | `ops_worker_jobs` | List worker jobs (queued/running/succeeded/failed/cancelled). |
 | `ops_worker_schedules` | List worker schedule configurations. |
-| `ops_report_status` | Show recent daily/weekly report generation status. |
+| `ops_report_status` | Show recent daily/weekly report generation jobs. |
 
 ## Audit
 
