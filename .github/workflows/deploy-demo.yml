@@ -147,7 +147,7 @@ jobs:
           cat > "$RELEASE/stonex-ops" <<'WRAPPER'
           #!/usr/bin/env bash
           set -euo pipefail
-          release="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          release="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
           export PYTHONPATH="$release/site${PYTHONPATH:+:$PYTHONPATH}"
           exec python3.12 -m stonex_ops "$@"
           WRAPPER
