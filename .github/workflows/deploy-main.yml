@@ -5,50 +5,33 @@ on:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
+concurrency:
+  group: stonex-ops-main-deploy
+  cancel-in-progress: false
+
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Install Python 3.12
-        run: uv python install 3.12
-
-      - name: Install dependencies
-        run: uv sync --locked --python 3.12 --group dev
-
-      - name: Lint
-        run: uv run ruff check .
-
-      - name: Test
-        run: uv run pytest
+        with: { ref: '${{ github.ref }}' }
+      - uses: astral-sh/setup-uv@v5
+        with: { enable-cache: true }
+      - run: uv python install 3.12
+      - run: uv sync --locked --python 3.12 --group dev
+      - run: uv run ruff check .
+      - run: uv run pytest
 
   build:
     needs: lint-and-test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Build wheel from tag
-        run: uv build
-
-      - name: Checksum
-        run: sha256sum dist/*.whl > dist/SHA256SUMS
-
+        with: { ref: '${{ github.ref }}' }
+      - uses: astral-sh/setup-uv@v5
+        with: { enable-cache: true }
+      - run: uv build
+      - run: sha256sum dist/*.whl > dist/SHA256SUMS
       - name: Generate RELEASE.json
         run: |
           WHEEL=$(ls dist/stonex_ops-*-py3-none-any.whl | head -1)
@@ -63,9 +46,7 @@ jobs:
             "tag": "${{ github.ref_name }}"
           }
           EOF
-
-      - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: stonex-ops-wheel-main
           path: |
@@ -77,47 +58,108 @@ jobs:
   deploy-main:
     needs: build
     runs-on: ubuntu-latest
-    environment: main
     steps:
-      - name: Download wheel
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: stonex-ops-wheel-main
           path: dist/
 
-      - name: Install SSH key
+      - name: Prepare SSH
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
+          test -n "$SSH_KEY"
+          test -n "$SSH_KNOWN_HOSTS"
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          install -m 600 /dev/null "$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/deploy_key"
 
-      - name: Deploy to HK main
+      - name: Upload wheel and install into release venv
+        id: install
+        env:
+          SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
         run: |
           RELEASE="/stonex/ops/releases/${{ github.ref_name }}"
           WHEEL=$(ls dist/stonex_ops-*-py3-none-any.whl | head -1)
+          WHEEL_NAME="$(basename "$WHEEL")"
+          SSH_KEY="$RUNNER_TEMP/deploy_key"
+          SSH_ARGS=(-i "$SSH_KEY" -p "${SSH_PORT:-22}" -o IdentitiesOnly=yes
+                    -o StrictHostKeyChecking=yes
+                    -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
 
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new \
-            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+          ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
             "mkdir -p $RELEASE /stonex/ops/logs /stonex/ops/tmp"
 
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new \
-            "$WHEEL" dist/SHA256SUMS dist/RELEASE.json \
-            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:$RELEASE/"
+          scp "${SSH_ARGS[@]}" "$WHEEL" dist/SHA256SUMS dist/RELEASE.json \
+            "${SSH_USER}@${SSH_HOST}:$RELEASE/"
 
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new \
-            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            "uv venv $RELEASE/.venv --python 3.12 && \
-             uv pip install --python $RELEASE/.venv/bin/python $RELEASE/$(basename $WHEEL) && \
-             ln -sfn $RELEASE /stonex/ops/current && \
-             ln -sfn /stonex/ops/current/.venv/bin/stonex-ops /stonex/bin/stonex-ops"
+          ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
+            "RELEASE=$RELEASE WHEEL_NAME=$WHEEL_NAME bash -s" << 'INSTALL'
+          set -e
+          uv venv "$RELEASE/.venv" --python 3.12
+          uv pip install --python "$RELEASE/.venv/bin/python" "$RELEASE/$WHEEL_NAME"
+          INSTALL
 
-      - name: Smoke test doctor (no probe, main env)
+      - name: Smoke test release venv (before symlink switch)
+        id: smoke
+        env:
+          SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new \
-            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            /stonex/bin/stonex-ops doctor \
+          RELEASE="/stonex/ops/releases/${{ github.ref_name }}"
+          SSH_KEY="$RUNNER_TEMP/deploy_key"
+          SSH_ARGS=(-i "$SSH_KEY" -p "${SSH_PORT:-22}" -o IdentitiesOnly=yes
+                    -o StrictHostKeyChecking=yes
+                    -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+
+          ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
+            "$RELEASE/.venv/bin/stonex-ops" doctor \
               --stonx-bin /stonex/bin/stonx \
               --env main \
               --path /stonex \
               --audit-file /stonex/ops/logs/audit.jsonl \
               --json
+
+      - name: Switch symlink (smoke passed)
+        if: steps.smoke.outcome == 'success'
+        env:
+          SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
+        run: |
+          RELEASE="/stonex/ops/releases/${{ github.ref_name }}"
+          SSH_KEY="$RUNNER_TEMP/deploy_key"
+          SSH_ARGS=(-i "$SSH_KEY" -p "${SSH_PORT:-22}" -o IdentitiesOnly=yes
+                    -o StrictHostKeyChecking=yes
+                    -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+
+          ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
+            "RELEASE=$RELEASE bash -s" << 'SWITCH'
+          set -e
+          ln -sfn "$RELEASE" /stonex/ops/current
+          ln -sfn /stonex/ops/current/.venv/bin/stonex-ops /stonex/bin/stonex-ops
+          echo "Deployed: $RELEASE"
+          SWITCH
+
+      - name: Rollback (remove bad release on smoke failure)
+        if: steps.smoke.outcome != 'success'
+        env:
+          SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
+        run: |
+          RELEASE="/stonex/ops/releases/${{ github.ref_name }}"
+          SSH_KEY="$RUNNER_TEMP/deploy_key"
+          SSH_ARGS=(-i "$SSH_KEY" -p "${SSH_PORT:-22}" -o IdentitiesOnly=yes
+                    -o StrictHostKeyChecking=yes
+                    -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+
+          echo "Smoke failed — removing bad release: $RELEASE"
+          ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" "rm -rf $RELEASE"
+          echo "Rollback complete (previous symlink untouched)"
+          exit 1

@@ -65,6 +65,10 @@ jobs:
           print('smoke OK: doctor exits cleanly without probe')
           "
 
+      - name: MCP stdio list_tools smoke
+        run: |
+          /tmp/smoke-venv/bin/python tests/smoke_mcp.py /tmp/smoke-venv/bin/stonex-ops
+
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:

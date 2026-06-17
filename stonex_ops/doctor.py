@@ -23,10 +23,6 @@ from stonex_ops.server import TOOL_DEFINITIONS
 from stonex_ops.tools import env_check
 from stonex_ops.whitelist import TenantList
 
-# Minimum compatible stonx version (date-based).
-# Update this when the stonx JSON CLI contract changes.
-COMPATIBLE_STONX = ">= 2026-06-16"
-
 
 @dataclass
 class DoctorResult:
@@ -37,18 +33,6 @@ class DoctorResult:
         self.checks.append({"check": name, "ok": ok, "detail": detail})
         if not ok:
             self.passed = False
-
-
-def _check_compatible_version(stonx_version: str) -> tuple[bool, str]:
-    """Check if the reported stonx version meets COMPATIBLE_STONX.
-
-    stonx --version typically outputs a commit-ish date in the version
-    string, e.g. 'stonx 1.2.3 (abc1234 2026-06-01)'.  We do a simple
-    substring check for the expected date boundaries.
-    """
-    if "2026" in stonx_version:
-        return True, f"stonx version appears recent: {stonx_version}"
-    return False, f"stonx version too old (expected >= 2026-06-16): {stonx_version}"
 
 
 async def run_doctor(
@@ -67,17 +51,17 @@ async def run_doctor(
         result.add("stonx_binary", False, f"not found or not executable: {stonx_bin}")
         return result  # can't continue without stonx
 
-    # 2. stonx --version works and is compatible
+    # 2. stonx --version works
     check = await env_check(stonx_bin, env, path)
     if check["stonx_reachable"]:
-        version = check.get("stonx_version", "")
-        ok, msg = _check_compatible_version(version)
-        result.add("stonx_version", ok, msg)
+        result.add("stonx_version", True, check.get("stonx_version", ""))
     else:
         result.add("stonx_version", False, "stonx --version failed")
         return result
 
-    # 3. Allowlisted ctl command works (tenant list as smoke read)
+    # 3. Compatibility: verify required `ctl ... --output json` contracts work.
+    #    This is a capability probe, not a version-string check.
+    #    stonx ctl tenant list is a stable read-only contract needed by all ops tools.
     try:
         output = await execute(stonx_bin, env, path, TenantList())
         tenants = json.loads(output).get("tenants", [])
