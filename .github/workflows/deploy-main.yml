@@ -57,6 +57,7 @@ jobs:
             dist/stonex_ops-*-py3-none-any.whl
             dist/SHA256SUMS
             dist/RELEASE.json
+            dist/constraints.txt
           if-no-files-found: error
 
   deploy-main:
