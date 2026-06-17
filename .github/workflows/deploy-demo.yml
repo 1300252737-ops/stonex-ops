@@ -1,0 +1,98 @@
+name: Deploy Demo
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --locked --python 3.12
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Test
+        run: uv run pytest
+
+  build-and-deploy:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    environment: demo
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Build wheel
+        run: uv build
+
+      - name: Checksum
+        run: sha256sum dist/*.whl > dist/SHA256SUMS
+
+      - name: Generate RELEASE.json
+        run: |
+          WHEEL=$(ls dist/stonex_ops-*-py3-none-any.whl | head -1)
+          cat > dist/RELEASE.json << EOF
+          {
+            "source_repo": "${{ github.repository }}",
+            "commit_sha": "${{ github.sha }}",
+            "wheel": "$(basename $WHEEL)",
+            "checksum": "$(cat dist/SHA256SUMS | cut -d' ' -f1)",
+            "build_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "compatible_stonx": ">= 2026-06-16",
+            "ref": "${{ github.ref_name }}"
+          }
+          EOF
+
+      - name: Install SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: Deploy to demo
+        run: |
+          RELEASE="/stonex/ops/releases/${{ github.sha }}"
+          WHEEL=$(ls dist/stonex_ops-*-py3-none-any.whl | head -1)
+
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "mkdir -p $RELEASE /stonex/ops/logs /stonex/ops/tmp"
+
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new \
+            "$WHEEL" dist/SHA256SUMS dist/RELEASE.json \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:$RELEASE/"
+
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "uv venv $RELEASE/.venv --python 3.12 && \
+             uv pip install --python $RELEASE/.venv/bin/python $RELEASE/$(basename $WHEEL) && \
+             ln -sfn $RELEASE /stonex/ops/current && \
+             ln -sfn /stonex/ops/current/.venv/bin/stonex-ops /stonex/bin/stonex-ops"
+
+      - name: Smoke test doctor (no probe, test env)
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            /stonex/bin/stonex-ops doctor \
+              --stonx-bin /stonex/bin/stonx \
+              --env test \
+              --path /stonex/data \
+              --audit-file /stonex/ops/logs/audit.jsonl \
+              --json

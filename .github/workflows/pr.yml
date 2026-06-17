@@ -1,0 +1,75 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --locked --python 3.12
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Test
+        run: uv run pytest
+
+  build-and-smoke:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Build wheel
+        run: uv build
+
+      - name: Checksum
+        run: sha256sum dist/*.whl > dist/SHA256SUMS
+
+      - name: Install smoke test
+        run: |
+          uv venv /tmp/smoke-venv --python 3.12
+          uv pip install --python /tmp/smoke-venv/bin/python dist/stonex_ops-*-py3-none-any.whl
+          /tmp/smoke-venv/bin/stonex-ops --help
+          /tmp/smoke-venv/bin/stonex-ops doctor --help
+
+      - name: Verify no probe in doctor
+        run: |
+          /tmp/smoke-venv/bin/stonex-ops doctor --stonx-bin /nonexistent --json 2>/dev/null \
+            | /tmp/smoke-venv/bin/python -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          assert data['passed'] is False, 'expected failed with no stonx'
+          assert any(c['check'] == 'stonx_binary' for c in data['checks']), 'missing stonx_binary check'
+          print('smoke OK: doctor exits cleanly without probe')
+          "
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stonex-ops-wheel
+          path: |
+            dist/stonex_ops-*-py3-none-any.whl
+            dist/SHA256SUMS
+          if-no-files-found: error
