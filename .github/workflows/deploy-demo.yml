@@ -26,6 +26,7 @@ jobs:
   build-and-deploy:
     needs: lint-and-test
     runs-on: ubuntu-latest
+    environment: demo
     steps:
       - uses: actions/checkout@v4
 
@@ -133,7 +134,7 @@ jobs:
               --json
 
       - name: Switch symlink (smoke passed)
-        if: steps.current.outputs.deploy == 'true' && steps.smoke.outcome == 'success'
+        if: success() && steps.current.outputs.deploy == 'true' && steps.smoke.outcome == 'success'
         env:
           SSH_HOST: ${{ vars.DEMO_SSH_HOST }}
           SSH_USER: ${{ vars.SSH_USER }}
@@ -154,7 +155,7 @@ jobs:
           SWITCH
 
       - name: Rollback (remove bad release on smoke failure)
-        if: steps.current.outputs.deploy == 'true' && steps.smoke.outcome != 'success'
+        if: failure() && steps.current.outputs.deploy == 'true' && steps.smoke.outcome == 'failure'
         env:
           SSH_HOST: ${{ vars.DEMO_SSH_HOST }}
           SSH_USER: ${{ vars.SSH_USER }}

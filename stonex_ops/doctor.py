@@ -1,9 +1,10 @@
 """doctor: read-only host compatibility check. Must not run probe.
 
 Checks:
-- stonx binary exists and is executable.
-- stonx --version works and meets the minimum compatible version.
-- Allowlisted stonx ctl commands are reachable.
+- stonx binary exists and is executable (PATH-aware).
+- stonx --version works.
+- Required `ctl ... --output json` contracts are available
+  (capability probe, not version-string check).
 - Audit file directory is writable.
 - MCP tool definitions are present.
 
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -43,13 +45,23 @@ async def run_doctor(
 ) -> DoctorResult:
     result = DoctorResult()
 
-    # 1. stonx binary exists and is executable
-    stonx_path = Path(stonx_bin)
-    if stonx_path.is_file() and os.access(stonx_path, os.X_OK):
-        result.add("stonx_binary", True, str(stonx_path))
+    # 1. stonx binary exists and is executable.
+    #    For absolute/relative paths, check directly.  For bare names (e.g.
+    #    --stonx-bin stonx), search PATH via shutil.which().
+    resolved = stonx_bin
+    if "/" in stonx_bin:
+        stonx_path = Path(stonx_bin)
+        if not (stonx_path.is_file() and os.access(stonx_path, os.X_OK)):
+            result.add("stonx_binary", False, f"not found or not executable: {stonx_bin}")
+            return result
     else:
-        result.add("stonx_binary", False, f"not found or not executable: {stonx_bin}")
-        return result  # can't continue without stonx
+        found = shutil.which(stonx_bin)
+        if found:
+            resolved = found
+        else:
+            result.add("stonx_binary", False, f"not found in PATH: {stonx_bin}")
+            return result
+    result.add("stonx_binary", True, resolved)
 
     # 2. stonx --version works
     check = await env_check(stonx_bin, env, path)

@@ -61,6 +61,7 @@ jobs:
   deploy-main:
     needs: build
     runs-on: ubuntu-latest
+    environment: main
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -129,7 +130,7 @@ jobs:
               --json
 
       - name: Switch symlink (smoke passed)
-        if: steps.smoke.outcome == 'success'
+        if: success() && steps.smoke.outcome == 'success'
         env:
           SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
           SSH_USER: ${{ vars.SSH_USER }}
@@ -150,7 +151,7 @@ jobs:
           SWITCH
 
       - name: Rollback (remove bad release on smoke failure)
-        if: steps.smoke.outcome != 'success'
+        if: failure() && steps.smoke.outcome == 'failure'
         env:
           SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
           SSH_USER: ${{ vars.SSH_USER }}

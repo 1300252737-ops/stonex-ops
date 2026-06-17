@@ -4,15 +4,15 @@ Usage: python tests/smoke_mcp.py /path/to/stonex-ops [--stonx-bin BIN]
 """
 
 import json
+import queue
 import subprocess
 import sys
+import threading
 import time
 
 
 def main() -> None:
     stonex_ops_bin = sys.argv[1]
-    # Use /bin/echo as a fake stonx so the process can at least start.
-    # The startup check will fail but the server should continue.
     stonx_bin = sys.argv[2] if len(sys.argv) > 2 else "/bin/echo"
 
     proc = subprocess.Popen(
@@ -25,6 +25,23 @@ def main() -> None:
         stderr=subprocess.PIPE,
         text=True,
     )
+
+    # Background thread reads stdout lines into a queue to avoid
+    # blocking indefinitely on proc.stdout.readline().
+    line_queue: queue.Queue[tuple[float, str | None]] = queue.Queue()
+    stop_event = threading.Event()
+
+    def _reader() -> None:
+        try:
+            for line in proc.stdout:
+                if stop_event.is_set():
+                    break
+                line_queue.put((time.time(), line))
+        finally:
+            line_queue.put((time.time(), None))  # sentinel
+
+    reader_thread = threading.Thread(target=_reader, daemon=True)
+    reader_thread.start()
 
     try:
         # MCP initialize handshake
@@ -40,12 +57,10 @@ def main() -> None:
         proc.stdin.write(init_req + "\n")
         proc.stdin.flush()
 
-        init_resp = _read_jsonrpc_line(proc, timeout=15)
+        init_resp = _read_jsonrpc(line_queue, timeout=15)
         if init_resp is None:
-            stderr_tail = proc.stderr.read()[-500:]
-            # If stonx --version fails, the server still logs a warning and
-            # starts. If the process exited, capture why.
             rc = proc.poll()
+            stderr_tail = _read_stderr(proc)[-500:]
             raise AssertionError(
                 f"no initialize response (exit={rc}). stderr tail: {stderr_tail}"
             )
@@ -68,10 +83,11 @@ def main() -> None:
         }) + "\n")
         proc.stdin.flush()
 
-        list_resp = _read_jsonrpc_line(proc, timeout=10)
-        assert list_resp is not None, (
-            f"no tools/list response. stderr tail: {proc.stderr.read()[-300:]}"
-        )
+        list_resp = _read_jsonrpc(line_queue, timeout=10)
+        if list_resp is None:
+            raise AssertionError(
+                f"no tools/list response. stderr tail: {_read_stderr(proc)[-300:]}"
+            )
         tools = list_resp.get("result", {}).get("tools", [])
         assert len(tools) >= 6, f"expected >=6 tools, got {len(tools)}"
         tool_names = [t["name"] for t in tools]
@@ -81,8 +97,10 @@ def main() -> None:
         print(f"list_tools OK: {len(tools)} tools ({', '.join(tool_names[:3])}...)")
 
     finally:
+        stop_event.set()
         proc.stdin.close()
         proc.terminate()
+        reader_thread.join(timeout=3)
         try:
             proc.wait(timeout=3)
         except subprocess.TimeoutExpired:
@@ -90,7 +108,7 @@ def main() -> None:
             proc.wait()
 
     # Verify stderr has startup output, not tool results
-    stderr = proc.stderr.read()
+    stderr = _read_stderr(proc)
     assert stderr, "stderr should have startup logs"
     assert "ops_env_check" not in stderr, (
         f"stderr should not contain tool output. Got: {stderr[:300]}"
@@ -99,14 +117,23 @@ def main() -> None:
     print("MCP stdio smoke all checks passed")
 
 
-def _read_jsonrpc_line(proc: subprocess.Popen, timeout: float = 10) -> dict | None:
-    """Read one JSON-RPC line from stdout."""
+def _read_jsonrpc(
+    line_queue: queue.Queue,
+    timeout: float = 10,
+) -> dict | None:
+    """Read one JSON-RPC message from the queue with a deadline."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        line = proc.stdout.readline()
-        if not line:
-            time.sleep(0.05)
-            continue
+        try:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            ts, line = line_queue.get(timeout=remaining)
+        except queue.Empty:
+            break
+
+        if line is None:  # sentinel (stdout closed)
+            break
         stripped = line.strip()
         if not stripped:
             continue
@@ -115,6 +142,20 @@ def _read_jsonrpc_line(proc: subprocess.Popen, timeout: float = 10) -> dict | No
         except json.JSONDecodeError:
             continue
     return None
+
+
+def _read_stderr(proc: subprocess.Popen) -> str:
+    """Non-blocking read of whatever is in stderr so far."""
+    try:
+        import os as _os
+        fd = proc.stderr.fileno()
+        _os.set_blocking(fd, False)
+    except (AttributeError, OSError):
+        pass
+    try:
+        return proc.stderr.read() or ""
+    except Exception:
+        return ""
 
 
 if __name__ == "__main__":
