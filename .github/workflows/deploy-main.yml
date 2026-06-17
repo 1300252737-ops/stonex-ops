@@ -36,7 +36,7 @@ jobs:
       - run: uv build
       - run: sha256sum dist/*.whl > dist/SHA256SUMS
       - name: Export constraints for deterministic install
-        run: uv export --no-hashes --format requirements-txt > dist/constraints.txt
+        run: uv export --no-hashes --no-emit-project --format requirements-txt > dist/constraints.txt
       - name: Generate RELEASE.json
         run: |
           WHEEL=$(ls dist/stonex_ops-*-py3-none-any.whl | head -1)

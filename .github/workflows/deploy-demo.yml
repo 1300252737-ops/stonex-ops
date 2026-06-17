@@ -55,7 +55,7 @@ jobs:
 
       - name: Export constraints for deterministic install
         if: steps.current.outputs.deploy == 'true'
-        run: uv export --no-hashes --format requirements-txt > dist/constraints.txt
+        run: uv export --no-hashes --no-emit-project --format requirements-txt > dist/constraints.txt
 
       - name: Generate RELEASE.json
         if: steps.current.outputs.deploy == 'true'
@@ -72,8 +72,30 @@ jobs:
           }
           EOF
 
-      - name: Prepare SSH
+      - name: Check demo deploy configuration
         if: steps.current.outputs.deploy == 'true'
+        id: deploy_config
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SSH_HOST: ${{ vars.DEMO_SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER }}
+        run: |
+          missing=()
+          [[ -n "$SSH_KEY" ]] || missing+=("SSH_KEY")
+          [[ -n "$SSH_KNOWN_HOSTS" ]] || missing+=("SSH_KNOWN_HOSTS")
+          [[ -n "$SSH_HOST" ]] || missing+=("DEMO_SSH_HOST")
+          [[ -n "$SSH_USER" ]] || missing+=("SSH_USER")
+
+          if (( ${#missing[@]} == 0 )); then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "SKIP: demo deploy is not configured; missing ${missing[*]}"
+          fi
+
+      - name: Prepare SSH
+        if: steps.current.outputs.deploy == 'true' && steps.deploy_config.outputs.deploy == 'true'
         env:
           SSH_KEY: ${{ secrets.SSH_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
@@ -86,7 +108,7 @@ jobs:
           printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/deploy_key"
 
       - name: Upload wheel and install into release venv
-        if: steps.current.outputs.deploy == 'true'
+        if: steps.current.outputs.deploy == 'true' && steps.deploy_config.outputs.deploy == 'true'
         id: install
         env:
           SSH_HOST: ${{ vars.DEMO_SSH_HOST }}
@@ -118,7 +140,7 @@ jobs:
           INSTALL
 
       - name: Pre-switch smoke (doctor + MCP list_tools on release venv)
-        if: steps.current.outputs.deploy == 'true'
+        if: steps.current.outputs.deploy == 'true' && steps.deploy_config.outputs.deploy == 'true'
         id: smoke
         env:
           SSH_HOST: ${{ vars.DEMO_SSH_HOST }}
@@ -149,7 +171,7 @@ jobs:
               --env test --path /stonex/data --audit-file /stonex/ops/logs/audit.jsonl
 
       - name: Recheck main HEAD before switch
-        if: success() && steps.current.outputs.deploy == 'true' && steps.smoke.outcome == 'success'
+        if: success() && steps.current.outputs.deploy == 'true' && steps.deploy_config.outputs.deploy == 'true' && steps.smoke.outcome == 'success'
         id: recheck
         run: |
           latest="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
