@@ -10,6 +10,9 @@ dependencies = [
 [project.scripts]
 stonex-ops = "stonex_ops.__main__:main"
 
+[dependency-groups]
+dev = ["ruff", "pytest"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
