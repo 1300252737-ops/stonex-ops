@@ -71,8 +71,8 @@ async def run_doctor(
         result.add("stonx_version", False, "stonx --version failed")
         return result
 
-    # 3. Compatibility: verify all read-only `ctl ... --output json` contracts.
-    #    Exercises every allowlisted command used by the MCP tools.
+    # 3. Compatibility: verify key read-only `ctl ... --output json` contracts
+    #    used by the MCP tools (tenant list, worker jobs, worker schedules).
     ctl_contracts: list[tuple[str, Any]] = [
         ("tenant_list", TenantList()),
         ("worker_jobs", WorkerJobList(limit=1)),

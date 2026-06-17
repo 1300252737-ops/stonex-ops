@@ -35,6 +35,8 @@ jobs:
         with: { enable-cache: true }
       - run: uv build
       - run: sha256sum dist/*.whl > dist/SHA256SUMS
+      - name: Export constraints for deterministic install
+        run: uv export --no-hashes --format requirements-txt > dist/constraints.txt
       - name: Generate RELEASE.json
         run: |
           WHEEL=$(ls dist/stonex_ops-*-py3-none-any.whl | head -1)
@@ -99,13 +101,16 @@ jobs:
             "mkdir -p $RELEASE /stonex/ops/logs /stonex/ops/tmp"
 
           scp "${SSH_ARGS[@]}" "$WHEEL" dist/SHA256SUMS dist/RELEASE.json \
+            dist/constraints.txt \
             "${SSH_USER}@${SSH_HOST}:$RELEASE/"
 
           ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
             "RELEASE=$RELEASE WHEEL_NAME=$WHEEL_NAME bash -s" << 'INSTALL'
           set -e
           uv venv "$RELEASE/.venv" --python 3.12
-          uv pip install --python "$RELEASE/.venv/bin/python" "$RELEASE/$WHEEL_NAME"
+          uv pip install --python "$RELEASE/.venv/bin/python" \
+            --constraint "$RELEASE/constraints.txt" \
+            "$RELEASE/$WHEEL_NAME"
           INSTALL
 
       - name: Pre-switch smoke (doctor + MCP list_tools on release venv)
@@ -133,7 +138,8 @@ jobs:
           scp "${SSH_ARGS[@]}" tests/smoke_mcp.py \
             "${SSH_USER}@${SSH_HOST}:/tmp/smoke_mcp.py"
           ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
-            "$RELEASE/.venv/bin/python" /tmp/smoke_mcp.py "$BIN" /stonex/bin/stonx
+            "$RELEASE/.venv/bin/python" /tmp/smoke_mcp.py "$BIN" /stonex/bin/stonx \
+              --env main --path /stonex --audit-file /stonex/ops/logs/audit.jsonl
 
       - name: Save previous current for rollback
         if: success() && steps.smoke.outcome == 'success'
@@ -175,6 +181,7 @@ jobs:
 
       - name: Post-switch smoke (verify stable entry point)
         if: success() && steps.switch.outcome == 'success'
+        id: post-smoke
         env:
           SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
           SSH_USER: ${{ vars.SSH_USER }}
@@ -196,8 +203,8 @@ jobs:
               --audit-file /stonex/ops/logs/audit.jsonl \
               --json
 
-      - name: Rollback on switch failure
-        if: failure() && steps.switch.outcome == 'failure' && steps.prev.outputs.prev != ''
+      - name: Rollback on switch or post-switch failure
+        if: failure() && steps.prev.outputs.prev != '' && (steps.switch.outcome == 'failure' || steps.post-smoke.outcome == 'failure')
         env:
           SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
           SSH_USER: ${{ vars.SSH_USER }}
@@ -209,13 +216,14 @@ jobs:
                     -o StrictHostKeyChecking=yes
                     -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
 
-          echo "Switch failed — rolling back to $PREV"
+          echo "Switch or post-switch smoke failed — rolling back to $PREV"
           ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
             "ln -sfn $PREV /stonex/ops/current && \
-             ln -sfn /stonex/ops/current/.venv/bin/stonex-ops /stonex/bin/stonex-ops"
+             ln -sfn /stonex/ops/current/.venv/bin/stonex-ops /stonex/bin/stonex-ops && \
+             rm -rf /stonex/ops/releases/${{ github.ref_name }}"
           exit 1
 
-      - name: Rollback (remove bad release on smoke failure)
+      - name: Rollback (remove bad release on pre-switch smoke failure)
         if: failure() && steps.smoke.outcome == 'failure'
         env:
           SSH_HOST: ${{ vars.MAIN_SSH_HOST }}

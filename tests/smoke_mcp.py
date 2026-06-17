@@ -1,6 +1,8 @@
 """MCP stdio smoke test: verify stonex-ops mcp starts, responds to list_tools.
 
-Usage: python tests/smoke_mcp.py /path/to/stonex-ops [--stonx-bin BIN]
+Usage:
+    python tests/smoke_mcp.py /path/to/stonex-ops STONX_BIN \\
+        [--env E] [--path P] [--audit-file F]
 """
 
 import json
@@ -14,12 +16,11 @@ import time
 def main() -> None:
     stonex_ops_bin = sys.argv[1]
     stonx_bin = sys.argv[2] if len(sys.argv) > 2 else "/bin/echo"
+    extra_args = sys.argv[3:]  # --env, --path, --audit-file, etc.
 
     proc = subprocess.Popen(
         [stonex_ops_bin, "mcp",
-         "--stonx-bin", stonx_bin,
-         "--env", "scratch",
-         "--path", "/tmp"],
+         "--stonx-bin", stonx_bin] + extra_args,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
