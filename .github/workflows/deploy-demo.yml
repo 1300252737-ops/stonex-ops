@@ -182,7 +182,7 @@ jobs:
           scp "${SSH_ARGS[@]}" tests/smoke_mcp.py \
             "${SSH_USER}@${SSH_HOST}:/tmp/smoke_mcp.py"
           ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
-            python3.12 /tmp/smoke_mcp.py "$BIN" /stonex/bin/stonx \
+            "PYTHONPATH=$RELEASE/site" python3.12 /tmp/smoke_mcp.py "$BIN" /stonex/bin/stonx \
               --env test --path /stonex/data --audit-file /stonex/ops/logs/audit.jsonl
 
       - name: Recheck main HEAD before switch
