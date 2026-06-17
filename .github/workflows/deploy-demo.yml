@@ -72,6 +72,17 @@ jobs:
           }
           EOF
 
+      - name: Build deploy bundle
+        if: steps.current.outputs.deploy == 'true'
+        run: |
+          WHEEL=$(ls dist/stonex_ops-*-py3-none-any.whl | head -1)
+          rm -rf dist/site
+          python3 -m pip install \
+            --target dist/site \
+            --constraint dist/constraints.txt \
+            "$WHEEL"
+          tar -C dist/site -czf dist/site.tar.gz .
+
       - name: Check demo deploy configuration
         if: steps.current.outputs.deploy == 'true'
         id: deploy_config
@@ -107,7 +118,7 @@ jobs:
           install -m 600 /dev/null "$RUNNER_TEMP/deploy_key"
           printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/deploy_key"
 
-      - name: Upload wheel and install into release venv
+      - name: Upload deploy bundle
         if: steps.current.outputs.deploy == 'true' && steps.deploy_config.outputs.deploy == 'true'
         id: install
         env:
@@ -116,8 +127,6 @@ jobs:
           SSH_PORT: ${{ vars.STONEX_SSH_PORT }}
         run: |
           RELEASE="/stonex/ops/releases/${{ github.sha }}"
-          WHEEL=$(ls dist/stonex_ops-*-py3-none-any.whl | head -1)
-          WHEEL_NAME="$(basename "$WHEEL")"
           SSH_KEY="$RUNNER_TEMP/deploy_key"
           SSH_ARGS=(-i "$SSH_KEY" -o Port="${SSH_PORT:-22}" -o IdentitiesOnly=yes
                     -o StrictHostKeyChecking=yes
@@ -126,20 +135,26 @@ jobs:
           ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
             "mkdir -p $RELEASE /stonex/ops/logs /stonex/ops/tmp"
 
-          scp "${SSH_ARGS[@]}" "$WHEEL" dist/SHA256SUMS dist/RELEASE.json \
-            dist/constraints.txt \
+          scp "${SSH_ARGS[@]}" dist/site.tar.gz dist/SHA256SUMS dist/RELEASE.json \
             "${SSH_USER}@${SSH_HOST}:$RELEASE/"
 
           ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
-            "RELEASE=$RELEASE WHEEL_NAME=$WHEEL_NAME bash -s" << 'INSTALL'
+            "RELEASE=$RELEASE bash -s" << 'INSTALL'
           set -e
-          python3.12 -m venv "$RELEASE/.venv"
-          "$RELEASE/.venv/bin/python" -m pip install \
-            --constraint "$RELEASE/constraints.txt" \
-            "$RELEASE/$WHEEL_NAME"
+          rm -rf "$RELEASE/site"
+          mkdir -p "$RELEASE/site"
+          tar -xzf "$RELEASE/site.tar.gz" -C "$RELEASE/site"
+          cat > "$RELEASE/stonex-ops" <<'WRAPPER'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          release="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          export PYTHONPATH="$release/site${PYTHONPATH:+:$PYTHONPATH}"
+          exec python3.12 -m stonex_ops "$@"
+          WRAPPER
+          chmod +x "$RELEASE/stonex-ops"
           INSTALL
 
-      - name: Pre-switch smoke (doctor + MCP list_tools on release venv)
+      - name: Pre-switch smoke (doctor + MCP list_tools on release bundle)
         if: steps.current.outputs.deploy == 'true' && steps.deploy_config.outputs.deploy == 'true'
         id: smoke
         env:
@@ -152,7 +167,7 @@ jobs:
           SSH_ARGS=(-i "$SSH_KEY" -o Port="${SSH_PORT:-22}" -o IdentitiesOnly=yes
                     -o StrictHostKeyChecking=yes
                     -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
-          BIN="$RELEASE/.venv/bin/stonex-ops"
+          BIN="$RELEASE/stonex-ops"
 
           # Doctor
           ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
@@ -167,7 +182,7 @@ jobs:
           scp "${SSH_ARGS[@]}" tests/smoke_mcp.py \
             "${SSH_USER}@${SSH_HOST}:/tmp/smoke_mcp.py"
           ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
-            "$RELEASE/.venv/bin/python" /tmp/smoke_mcp.py "$BIN" /stonex/bin/stonx \
+            python3.12 /tmp/smoke_mcp.py "$BIN" /stonex/bin/stonx \
               --env test --path /stonex/data --audit-file /stonex/ops/logs/audit.jsonl
 
       - name: Recheck main HEAD before switch
@@ -216,7 +231,7 @@ jobs:
             "RELEASE=$RELEASE bash -s" << 'SWITCH'
           set -e
           ln -sfn "$RELEASE" /stonex/ops/current
-          ln -sfn /stonex/ops/current/.venv/bin/stonex-ops /stonex/bin/stonex-ops
+          ln -sfn /stonex/ops/current/stonex-ops /stonex/bin/stonex-ops
           echo "Switched to $RELEASE"
           SWITCH
 
@@ -261,7 +276,7 @@ jobs:
           echo "Switch or post-switch smoke failed — rolling back to $PREV"
           ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
             "ln -sfn $PREV /stonex/ops/current && \
-             ln -sfn /stonex/ops/current/.venv/bin/stonex-ops /stonex/bin/stonex-ops && \
+             ln -sfn /stonex/ops/current/stonex-ops /stonex/bin/stonex-ops && \
              rm -rf $RELEASE"
           exit 1
 

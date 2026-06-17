@@ -113,15 +113,16 @@ wheel=stonex_ops-<version>-py3-none-any.whl
 
 mkdir -p "$release" /stonex/ops/logs
 cp "$wheel" "$release/"
-python3.12 -m venv "$release/.venv"
-"$release/.venv/bin/python" -m pip install "$release/$(basename $wheel)"
+# CI builds site.tar.gz with all Python dependencies.
+mkdir -p "$release/site"
+tar -xzf "$release/site.tar.gz" -C "$release/site"
 
 # Smoke before switching
-"$release/.venv/bin/stonex-ops" doctor --stonx-bin /stonex/bin/stonx ...
+"$release/stonex-ops" doctor --stonx-bin /stonex/bin/stonx ...
 
 # Switch
 ln -sfn "$release" /stonex/ops/current
-ln -sfn /stonex/ops/current/.venv/bin/stonex-ops /stonex/bin/stonex-ops
+ln -sfn /stonex/ops/current/stonex-ops /stonex/bin/stonex-ops
 ```
 
 ## Testing
