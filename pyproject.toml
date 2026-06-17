@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "StoneX ops MCP server - standalone diagnostics via stonx ctl --output json"
 requires-python = ">=3.12"
 dependencies = [
-    "mcp>=1.0.0",
+    "mcp>=1.27",
 ]
 
 [project.scripts]

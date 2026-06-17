@@ -23,7 +23,7 @@ from typing import Any, Optional
 from stonex_ops.executor import ExecutionError, execute
 from stonex_ops.server import TOOL_DEFINITIONS
 from stonex_ops.tools import env_check
-from stonex_ops.whitelist import TenantList
+from stonex_ops.whitelist import TenantList, WorkerJobList, WorkerScheduleList
 
 
 @dataclass
@@ -71,36 +71,50 @@ async def run_doctor(
         result.add("stonx_version", False, "stonx --version failed")
         return result
 
-    # 3. Compatibility: verify required `ctl ... --output json` contracts work.
-    #    This is a capability probe, not a version-string check.
-    #    stonx ctl tenant list is a stable read-only contract needed by all ops tools.
-    try:
-        output = await execute(stonx_bin, env, path, TenantList())
-        tenants = json.loads(output).get("tenants", [])
-        result.add(
-            "stonx_ctl_read", True,
-            f"tenant list returned {len(tenants)} tenant(s)",
-        )
-    except ExecutionError as exc:
-        result.add("stonx_ctl_read", False, str(exc))
-    except Exception as exc:
-        result.add("stonx_ctl_read", False, f"{type(exc).__name__}: {exc}")
+    # 3. Compatibility: verify all read-only `ctl ... --output json` contracts.
+    #    Exercises every allowlisted command used by the MCP tools.
+    ctl_contracts: list[tuple[str, Any]] = [
+        ("tenant_list", TenantList()),
+        ("worker_jobs", WorkerJobList(limit=1)),
+        ("worker_schedules", WorkerScheduleList()),
+    ]
+    all_ok = True
+    for label, cmd in ctl_contracts:
+        try:
+            output = await execute(stonx_bin, env, path, cmd)
+            json.loads(output)  # must be valid JSON
+            result.add(f"stonx_ctl_{label}", True, "ok")
+        except ExecutionError as exc:
+            all_ok = False
+            result.add(f"stonx_ctl_{label}", False, str(exc))
+        except Exception as exc:
+            all_ok = False
+            result.add(f"stonx_ctl_{label}", False, f"{type(exc).__name__}: {exc}")
+    if not all_ok:
+        return result
 
-    # 4. Audit file directory is writable
+    # 4. Audit file is writable (directory + file itself)
     if audit_file:
-        audit_dir = Path(audit_file).parent
+        audit_path = Path(audit_file)
+        audit_dir = audit_path.parent
+        try:
+            # Check directory
+            ok = audit_dir.is_dir() and os.access(str(audit_dir), os.W_OK)
+            if ok and audit_path.exists():
+                ok = os.access(str(audit_path), os.W_OK)
+            if not ok and not audit_path.exists():
+                # Try to create it to verify writability
+                try:
+                    audit_path.touch()
+                    audit_path.unlink()
+                    ok = True
+                except OSError:
+                    ok = False
+            result.add("audit_file", ok, str(audit_path) if ok else f"not writable: {audit_path}")
+        except Exception as exc:
+            result.add("audit_file", False, str(exc))
     else:
-        audit_dir = Path(path)
-    try:
-        if audit_dir.is_dir() and os.access(str(audit_dir), os.W_OK):
-            result.add("audit_dir", True, str(audit_dir))
-        else:
-            result.add(
-                "audit_dir", False,
-                f"not writable: {audit_dir} (exists={audit_dir.is_dir()})",
-            )
-    except Exception as exc:
-        result.add("audit_dir", False, str(exc))
+        result.add("audit_file", True, f"default: {Path(path)}")
 
     # 5. MCP tool definitions are present
     tool_names = [t.name for t in TOOL_DEFINITIONS]
