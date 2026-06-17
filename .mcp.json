@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "stonex-ops": {
+      "command": "/Users/fikgol/workspaces/stonex-ops/.venv/bin/stonex-ops",
+      "args": [
+        "mcp",
+        "--stonx-bin", "/bin/echo",
+        "--env", "scratch",
+        "--path", "/tmp"
+      ]
+    }
+  }
+}
