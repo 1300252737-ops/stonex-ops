@@ -113,8 +113,8 @@ wheel=stonex_ops-<version>-py3-none-any.whl
 
 mkdir -p "$release" /stonex/ops/logs
 cp "$wheel" "$release/"
-uv venv "$release/.venv" --python 3.12
-uv pip install --python "$release/.venv/bin/python" "$release/$(basename $wheel)"
+python3.12 -m venv "$release/.venv"
+"$release/.venv/bin/python" -m pip install "$release/$(basename $wheel)"
 
 # Smoke before switching
 "$release/.venv/bin/stonex-ops" doctor --stonx-bin /stonex/bin/stonx ...

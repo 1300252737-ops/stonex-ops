@@ -73,8 +73,8 @@ jobs:
 
       - name: Prepare SSH
         env:
-          SSH_KEY: ${{ secrets.SSH_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SSH_KEY: ${{ secrets.STONEX_DEPLOY_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.STONEX_SSH_KNOWN_HOSTS }}
         run: |
           test -n "$SSH_KEY"
           test -n "$SSH_KNOWN_HOSTS"
@@ -87,8 +87,8 @@ jobs:
         id: install
         env:
           SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
-          SSH_USER: ${{ vars.SSH_USER }}
-          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.STONEX_SSH_USER }}
+          SSH_PORT: ${{ vars.STONEX_SSH_PORT }}
         run: |
           RELEASE="/stonex/ops/releases/${{ github.ref_name }}"
           WHEEL=$(ls dist/stonex_ops-*-py3-none-any.whl | head -1)
@@ -108,8 +108,8 @@ jobs:
           ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
             "RELEASE=$RELEASE WHEEL_NAME=$WHEEL_NAME bash -s" << 'INSTALL'
           set -e
-          uv venv "$RELEASE/.venv" --python 3.12
-          uv pip install --python "$RELEASE/.venv/bin/python" \
+          python3.12 -m venv "$RELEASE/.venv"
+          "$RELEASE/.venv/bin/python" -m pip install \
             --constraint "$RELEASE/constraints.txt" \
             "$RELEASE/$WHEEL_NAME"
           INSTALL
@@ -118,8 +118,8 @@ jobs:
         id: smoke
         env:
           SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
-          SSH_USER: ${{ vars.SSH_USER }}
-          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.STONEX_SSH_USER }}
+          SSH_PORT: ${{ vars.STONEX_SSH_PORT }}
         run: |
           RELEASE="/stonex/ops/releases/${{ github.ref_name }}"
           SSH_KEY="$RUNNER_TEMP/deploy_key"
@@ -147,8 +147,8 @@ jobs:
         id: prev
         env:
           SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
-          SSH_USER: ${{ vars.SSH_USER }}
-          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.STONEX_SSH_USER }}
+          SSH_PORT: ${{ vars.STONEX_SSH_PORT }}
         run: |
           SSH_KEY="$RUNNER_TEMP/deploy_key"
           SSH_ARGS=(-i "$SSH_KEY" -o Port="${SSH_PORT:-22}" -o IdentitiesOnly=yes
@@ -163,8 +163,8 @@ jobs:
         id: switch
         env:
           SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
-          SSH_USER: ${{ vars.SSH_USER }}
-          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.STONEX_SSH_USER }}
+          SSH_PORT: ${{ vars.STONEX_SSH_PORT }}
         run: |
           RELEASE="/stonex/ops/releases/${{ github.ref_name }}"
           SSH_KEY="$RUNNER_TEMP/deploy_key"
@@ -185,8 +185,8 @@ jobs:
         id: post-smoke
         env:
           SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
-          SSH_USER: ${{ vars.SSH_USER }}
-          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.STONEX_SSH_USER }}
+          SSH_PORT: ${{ vars.STONEX_SSH_PORT }}
         run: |
           SSH_KEY="$RUNNER_TEMP/deploy_key"
           SSH_ARGS=(-i "$SSH_KEY" -o Port="${SSH_PORT:-22}" -o IdentitiesOnly=yes
@@ -208,8 +208,8 @@ jobs:
         if: failure() && steps.prev.outputs.prev != '' && (steps.switch.outcome == 'failure' || steps.post-smoke.outcome == 'failure')
         env:
           SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
-          SSH_USER: ${{ vars.SSH_USER }}
-          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.STONEX_SSH_USER }}
+          SSH_PORT: ${{ vars.STONEX_SSH_PORT }}
         run: |
           PREV="${{ steps.prev.outputs.prev }}"
           SSH_KEY="$RUNNER_TEMP/deploy_key"
@@ -228,8 +228,8 @@ jobs:
         if: failure() && steps.smoke.outcome == 'failure'
         env:
           SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
-          SSH_USER: ${{ vars.SSH_USER }}
-          SSH_PORT: ${{ vars.SSH_PORT }}
+          SSH_USER: ${{ vars.STONEX_SSH_USER }}
+          SSH_PORT: ${{ vars.STONEX_SSH_PORT }}
         run: |
           RELEASE="/stonex/ops/releases/${{ github.ref_name }}"
           SSH_KEY="$RUNNER_TEMP/deploy_key"
