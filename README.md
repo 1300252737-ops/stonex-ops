@@ -44,9 +44,11 @@ stonex-ops mcp --stonx-bin /path/to/stonx --env test
 ### SSH remote (production HK main)
 
 ```bash
-ssh -T ops@hk-main /opt/stonex-ops/bin/stonex-ops mcp \
-  --stonx-bin /opt/stonx/bin/stonx \
-  --env main
+ssh -T x-001@<target-host> /stonex/bin/stonex-ops mcp \
+  --stonx-bin /stonex/bin/stonx \
+  --env main \
+  --path /stonex \
+  --audit-file /stonex/ops/logs/audit.jsonl
 ```
 
 Claude Code MCP config:
@@ -57,10 +59,12 @@ Claude Code MCP config:
     "stonex-ops": {
       "command": "ssh",
       "args": [
-        "-T", "ops@hk-main",
-        "/opt/stonex-ops/bin/stonex-ops", "mcp",
-        "--stonx-bin", "/opt/stonx/bin/stonx",
-        "--env", "main"
+        "-T", "x-001@<target-host>",
+        "/stonex/bin/stonex-ops", "mcp",
+        "--stonx-bin", "/stonex/bin/stonx",
+        "--env", "main",
+        "--path", "/stonex",
+        "--audit-file", "/stonex/ops/logs/audit.jsonl"
       ]
     }
   }
@@ -86,6 +90,38 @@ Every tool call is recorded as a JSONL line to stderr (and an optional
 
 ```json
 {"timestamp":"2026-06-16T10:00:00Z","tool":"ops_probe_connections","arguments":{...},"result_status":"success","duration_ms":230,"session_id":"..."}
+```
+
+### Doctor (host compatibility check)
+
+```bash
+stonex-ops doctor \
+  --stonx-bin /stonex/bin/stonx \
+  --env test \
+  --path /stonex/data \
+  --audit-file /stonex/ops/logs/audit.jsonl
+```
+
+Read-only. Never runs probe. Checks: stonx binary reachable, ctl
+contracts work, audit directory writable, MCP tools defined.
+
+## Deploy
+
+```bash
+release=/stonex/ops/releases/<version>
+wheel=stonex_ops-<version>-py3-none-any.whl
+
+mkdir -p "$release" /stonex/ops/logs
+cp "$wheel" "$release/"
+uv venv "$release/.venv" --python 3.12
+uv pip install --python "$release/.venv/bin/python" "$release/$(basename $wheel)"
+
+# Smoke before switching
+"$release/.venv/bin/stonex-ops" doctor --stonx-bin /stonex/bin/stonx ...
+
+# Switch
+ln -sfn "$release" /stonex/ops/current
+ln -sfn /stonex/ops/current/.venv/bin/stonex-ops /stonex/bin/stonex-ops
 ```
 
 ## Testing

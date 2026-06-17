@@ -16,8 +16,9 @@ import asyncio
 import json
 import sys
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -286,9 +287,14 @@ async def _execute_tool(
 
 # ---- MCP Server ----
 
-def _create_server() -> Server:
+def _create_server(state: ServerState) -> Server:
     """Build the MCP Server with list_tools / call_tool handlers."""
-    server = Server("stonex-ops")
+
+    @asynccontextmanager
+    async def _lifespan(server: Server) -> AsyncIterator[ServerState]:
+        yield state
+
+    server = Server("stonex-ops", lifespan=_lifespan)
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
@@ -296,10 +302,10 @@ def _create_server() -> Server:
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-        state: ServerState = server.request_context.lifespan_context  # type: ignore[union-attr]
+        ctx_state: ServerState = server.request_context.lifespan_context  # type: ignore[union-attr]
 
         # Concurrency guard
-        if state.semaphore.locked():
+        if ctx_state.semaphore.locked():
             return [TextContent(
                 type="text",
                 text=json.dumps({
@@ -311,13 +317,13 @@ def _create_server() -> Server:
                 }, ensure_ascii=False),
             )]
 
-        async with state.semaphore:
+        async with ctx_state.semaphore:
             started = time.monotonic()
             error_msg: Optional[str] = None
             status = AuditStatus.success
 
             try:
-                result = await _execute_tool(state, name, arguments)
+                result = await _execute_tool(ctx_state, name, arguments)
                 redact(result)
                 return [TextContent(
                     type="text",
@@ -355,14 +361,14 @@ def _create_server() -> Server:
                 )]
             finally:
                 duration_ms = int((time.monotonic() - started) * 1000)
-                state.logger.log(AuditEntry(
+                ctx_state.logger.log(AuditEntry(
                     timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     tool=name,
                     arguments=arguments,
                     result_status=status,
                     error=error_msg,
                     duration_ms=duration_ms,
-                    session_id=state.logger.session_id,
+                    session_id=ctx_state.logger.session_id,
                 ))
 
     return server
@@ -399,12 +405,11 @@ async def run_mcp_server(
         logger=logger,
     )
 
-    server = _create_server()
+    server = _create_server(state)
 
     async with stdio_server() as (read, write):
         await server.run(
             read,
             write,
             server.create_initialization_options(),
-            lifespan_context=state,
         )

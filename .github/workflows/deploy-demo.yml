@@ -1,0 +1,262 @@
+name: Deploy Demo
+
+on:
+  push:
+    branches: [main]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: stonex-ops-demo-deploy
+  cancel-in-progress: false
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: { enable-cache: true }
+      - run: uv python install 3.12
+      - run: uv sync --locked --python 3.12 --group dev
+      - run: uv run ruff check .
+      - run: uv run pytest
+
+  build-and-deploy:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    environment: demo
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check current main HEAD (stale deploy guard)
+        id: current
+        run: |
+          latest="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          if [[ "$latest" == "$GITHUB_SHA" ]]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "SKIP: $GITHUB_SHA is not current main ($latest)"
+          fi
+
+      - uses: astral-sh/setup-uv@v5
+        if: steps.current.outputs.deploy == 'true'
+        with: { enable-cache: true }
+
+      - name: Build
+        if: steps.current.outputs.deploy == 'true'
+        run: uv build
+
+      - name: Checksum
+        if: steps.current.outputs.deploy == 'true'
+        run: sha256sum dist/*.whl > dist/SHA256SUMS
+
+      - name: Export constraints for deterministic install
+        if: steps.current.outputs.deploy == 'true'
+        run: uv export --no-hashes --format requirements-txt > dist/constraints.txt
+
+      - name: Generate RELEASE.json
+        if: steps.current.outputs.deploy == 'true'
+        run: |
+          WHEEL=$(ls dist/stonex_ops-*-py3-none-any.whl | head -1)
+          cat > dist/RELEASE.json << EOF
+          {
+            "source_repo": "${{ github.repository }}",
+            "commit_sha": "${{ github.sha }}",
+            "wheel": "$(basename $WHEEL)",
+            "checksum": "$(cat dist/SHA256SUMS | cut -d' ' -f1)",
+            "build_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "ref": "${{ github.ref_name }}"
+          }
+          EOF
+
+      - name: Prepare SSH
+        if: steps.current.outputs.deploy == 'true'
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          test -n "$SSH_KEY"
+          test -n "$SSH_KNOWN_HOSTS"
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          install -m 600 /dev/null "$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/deploy_key"
+
+      - name: Upload wheel and install into release venv
+        if: steps.current.outputs.deploy == 'true'
+        id: install
+        env:
+          SSH_HOST: ${{ vars.DEMO_SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
+        run: |
+          RELEASE="/stonex/ops/releases/${{ github.sha }}"
+          WHEEL=$(ls dist/stonex_ops-*-py3-none-any.whl | head -1)
+          WHEEL_NAME="$(basename "$WHEEL")"
+          SSH_KEY="$RUNNER_TEMP/deploy_key"
+          SSH_ARGS=(-i "$SSH_KEY" -o Port="${SSH_PORT:-22}" -o IdentitiesOnly=yes
+                    -o StrictHostKeyChecking=yes
+                    -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+
+          ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
+            "mkdir -p $RELEASE /stonex/ops/logs /stonex/ops/tmp"
+
+          scp "${SSH_ARGS[@]}" "$WHEEL" dist/SHA256SUMS dist/RELEASE.json \
+            dist/constraints.txt \
+            "${SSH_USER}@${SSH_HOST}:$RELEASE/"
+
+          ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
+            "RELEASE=$RELEASE WHEEL_NAME=$WHEEL_NAME bash -s" << 'INSTALL'
+          set -e
+          uv venv "$RELEASE/.venv" --python 3.12
+          uv pip install --python "$RELEASE/.venv/bin/python" \
+            --constraint "$RELEASE/constraints.txt" \
+            "$RELEASE/$WHEEL_NAME"
+          INSTALL
+
+      - name: Pre-switch smoke (doctor + MCP list_tools on release venv)
+        if: steps.current.outputs.deploy == 'true'
+        id: smoke
+        env:
+          SSH_HOST: ${{ vars.DEMO_SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
+        run: |
+          RELEASE="/stonex/ops/releases/${{ github.sha }}"
+          SSH_KEY="$RUNNER_TEMP/deploy_key"
+          SSH_ARGS=(-i "$SSH_KEY" -o Port="${SSH_PORT:-22}" -o IdentitiesOnly=yes
+                    -o StrictHostKeyChecking=yes
+                    -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+          BIN="$RELEASE/.venv/bin/stonex-ops"
+
+          # Doctor
+          ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
+            "$BIN" doctor \
+              --stonx-bin /stonex/bin/stonx \
+              --env test \
+              --path /stonex/data \
+              --audit-file /stonex/ops/logs/audit.jsonl \
+              --json
+
+          # MCP list_tools via stdio (smoke_mcp.py on remote)
+          scp "${SSH_ARGS[@]}" tests/smoke_mcp.py \
+            "${SSH_USER}@${SSH_HOST}:/tmp/smoke_mcp.py"
+          ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
+            "$RELEASE/.venv/bin/python" /tmp/smoke_mcp.py "$BIN" /stonex/bin/stonx \
+              --env test --path /stonex/data --audit-file /stonex/ops/logs/audit.jsonl
+
+      - name: Recheck main HEAD before switch
+        if: success() && steps.current.outputs.deploy == 'true' && steps.smoke.outcome == 'success'
+        id: recheck
+        run: |
+          latest="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          if [[ "$latest" == "$GITHUB_SHA" ]]; then
+            echo "switch=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "switch=false" >> "$GITHUB_OUTPUT"
+            echo "SKIP switch: main moved to $latest (we are $GITHUB_SHA)"
+          fi
+
+      - name: Save previous current for rollback
+        if: steps.recheck.outputs.switch == 'true'
+        id: prev
+        env:
+          SSH_HOST: ${{ vars.DEMO_SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
+        run: |
+          SSH_KEY="$RUNNER_TEMP/deploy_key"
+          SSH_ARGS=(-i "$SSH_KEY" -o Port="${SSH_PORT:-22}" -o IdentitiesOnly=yes
+                    -o StrictHostKeyChecking=yes
+                    -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+          PREV=$(ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
+            "readlink /stonex/ops/current || echo ''")
+          echo "prev=$PREV" >> "$GITHUB_OUTPUT"
+
+      - name: Switch symlink
+        if: steps.recheck.outputs.switch == 'true'
+        id: switch
+        env:
+          SSH_HOST: ${{ vars.DEMO_SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
+        run: |
+          RELEASE="/stonex/ops/releases/${{ github.sha }}"
+          SSH_KEY="$RUNNER_TEMP/deploy_key"
+          SSH_ARGS=(-i "$SSH_KEY" -o Port="${SSH_PORT:-22}" -o IdentitiesOnly=yes
+                    -o StrictHostKeyChecking=yes
+                    -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+
+          ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
+            "RELEASE=$RELEASE bash -s" << 'SWITCH'
+          set -e
+          ln -sfn "$RELEASE" /stonex/ops/current
+          ln -sfn /stonex/ops/current/.venv/bin/stonex-ops /stonex/bin/stonex-ops
+          echo "Switched to $RELEASE"
+          SWITCH
+
+      - name: Post-switch smoke (verify stable entry point)
+        if: success() && steps.switch.outcome == 'success'
+        id: post-smoke
+        env:
+          SSH_HOST: ${{ vars.DEMO_SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
+        run: |
+          SSH_KEY="$RUNNER_TEMP/deploy_key"
+          SSH_ARGS=(-i "$SSH_KEY" -o Port="${SSH_PORT:-22}" -o IdentitiesOnly=yes
+                    -o StrictHostKeyChecking=yes
+                    -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+
+          ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
+            /stonex/bin/stonex-ops --help
+
+          ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
+            /stonex/bin/stonex-ops doctor \
+              --stonx-bin /stonex/bin/stonx \
+              --env test \
+              --path /stonex/data \
+              --audit-file /stonex/ops/logs/audit.jsonl \
+              --json
+
+      - name: Rollback on switch or post-switch failure
+        if: failure() && steps.prev.outputs.prev != '' && (steps.switch.outcome == 'failure' || steps.post-smoke.outcome == 'failure')
+        env:
+          SSH_HOST: ${{ vars.DEMO_SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
+        run: |
+          PREV="${{ steps.prev.outputs.prev }}"
+          RELEASE="/stonex/ops/releases/${{ github.sha }}"
+          SSH_KEY="$RUNNER_TEMP/deploy_key"
+          SSH_ARGS=(-i "$SSH_KEY" -o Port="${SSH_PORT:-22}" -o IdentitiesOnly=yes
+                    -o StrictHostKeyChecking=yes
+                    -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+
+          echo "Switch or post-switch smoke failed — rolling back to $PREV"
+          ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
+            "ln -sfn $PREV /stonex/ops/current && \
+             ln -sfn /stonex/ops/current/.venv/bin/stonex-ops /stonex/bin/stonex-ops && \
+             rm -rf $RELEASE"
+          exit 1
+
+      - name: Rollback (remove bad release on pre-switch smoke failure)
+        if: failure() && steps.smoke.outcome == 'failure'
+        env:
+          SSH_HOST: ${{ vars.DEMO_SSH_HOST }}
+          SSH_USER: ${{ vars.SSH_USER }}
+          SSH_PORT: ${{ vars.SSH_PORT }}
+        run: |
+          RELEASE="/stonex/ops/releases/${{ github.sha }}"
+          SSH_KEY="$RUNNER_TEMP/deploy_key"
+          SSH_ARGS=(-i "$SSH_KEY" -o Port="${SSH_PORT:-22}" -o IdentitiesOnly=yes
+                    -o StrictHostKeyChecking=yes
+                    -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+
+          echo "Smoke failed — removing bad release: $RELEASE"
+          ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" "rm -rf $RELEASE"
+          echo "Rollback complete (previous symlink untouched)"
+          exit 1
