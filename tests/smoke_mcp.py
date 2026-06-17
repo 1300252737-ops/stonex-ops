@@ -24,7 +24,7 @@ async def _run() -> None:
         args=["mcp", "--stonx-bin", stonx_bin, *extra_args],
     )
 
-    async with stdio_client(params) as (read, write):
+    async with stdio_client(params, errlog=sys.stderr) as (read, write):
         async with ClientSession(read, write) as session:
             init = await session.initialize()
             tools_result = await session.list_tools()
