@@ -127,7 +127,7 @@ ln -sfn /stonex/ops/current/stonex-ops /stonex/bin/stonex-ops
 ## Testing
 
 ```bash
-pytest
+nix develop -c uv run pytest
 ```
 
 ## Security

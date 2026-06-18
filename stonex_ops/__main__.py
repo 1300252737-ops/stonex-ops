@@ -6,6 +6,7 @@ import json
 import os
 import sys
 
+from stonex_ops.db import bootstrap_readonly_role, database_url_from_config
 from stonex_ops.doctor import run_doctor_sync
 from stonex_ops.server import run_mcp_server
 
@@ -18,13 +19,8 @@ def _expand_tilde(raw: str) -> str:
     return raw
 
 
-def _shared_args(sub) -> None:
-    """Add shared host/config arguments to a subparser."""
-    sub.add_argument(
-        "--stonx-bin",
-        default=os.environ.get("STONEX_BIN", "stonx"),
-        help="Path to the stonx binary (default: stonx, env: STONEX_BIN)",
-    )
+def _config_args(sub) -> None:
+    """Add shared stonx config location arguments to a subparser."""
     sub.add_argument(
         "--path",
         default=os.environ.get("STONEX_PATH", "~/.stonex"),
@@ -37,6 +33,16 @@ def _shared_args(sub) -> None:
         choices=["main", "test", "scratch"],
         help="StoneX environment (default: test, env: STONEX_ENV)",
     )
+
+
+def _shared_args(sub) -> None:
+    """Add shared host/config arguments to a subparser."""
+    sub.add_argument(
+        "--stonx-bin",
+        default=os.environ.get("STONEX_BIN", "stonx"),
+        help="Path to the stonx binary (default: stonx, env: STONEX_BIN)",
+    )
+    _config_args(sub)
     sub.add_argument(
         "--audit-file",
         default=os.environ.get("STONEX_OPS_AUDIT_FILE", None),
@@ -86,6 +92,19 @@ def main() -> None:
         help="Output result as JSON",
     )
 
+    # ---- bootstrap-readonly-db ----
+    bootstrap_parser = sub.add_parser(
+        "bootstrap-readonly-db",
+        help="Create or repair the PostgreSQL readonly role required by SQL ops tools",
+    )
+    _config_args(bootstrap_parser)
+    bootstrap_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Output result as JSON",
+    )
+
     args = parser.parse_args()
     path = _expand_tilde(args.path)
 
@@ -129,6 +148,29 @@ def main() -> None:
 
         if not result.passed:
             sys.exit(1)
+        sys.exit(0)
+
+    elif args.command == "bootstrap-readonly-db":
+        try:
+            result = bootstrap_readonly_role(database_url_from_config(path, args.env))
+        except Exception as exc:
+            if getattr(args, "json_output", False):
+                print(json.dumps({
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }, indent=2))
+            else:
+                print(f"bootstrap-readonly-db failed: {type(exc).__name__}: {exc}")
+            sys.exit(1)
+
+        if getattr(args, "json_output", False):
+            print(json.dumps({"ok": True, **result}, indent=2))
+        else:
+            action = "created" if result["created"] else "repaired"
+            print(
+                f"{action} {result['role']}: "
+                f"{result['visible_tables']} tables visible across {len(result['schemas'])} schemas"
+            )
         sys.exit(0)
 
 

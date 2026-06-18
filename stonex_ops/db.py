@@ -19,6 +19,7 @@ from typing import Any, Optional
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import psycopg
+from psycopg import sql
 from psycopg.rows import dict_row
 
 from stonex_ops.redaction import is_sensitive_key
@@ -28,6 +29,23 @@ DEFAULT_MAX_ROWS = 200
 MAX_MAX_ROWS = 2000
 REDACTED = "[redacted]"
 SQL_TIMEOUT_SECONDS = 5.0
+USER_SCHEMA_SQL = """
+    select nspname
+    from pg_namespace
+    where nspname <> 'information_schema'
+      and nspname !~ '^pg_'
+    order by nspname
+"""
+VISIBLE_TABLE_COUNT_SQL = """
+    select count(*)
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname <> 'information_schema'
+      and n.nspname !~ '^pg_'
+      and c.relkind in ('r', 'v', 'm', 'p')
+      and has_schema_privilege(n.oid, 'usage')
+      and has_table_privilege(c.oid, 'select')
+"""
 
 
 def config_path(path: str, env: str) -> Path:
@@ -89,6 +107,80 @@ def resolve_readonly_database_url(
         return value
 
     return derive_readonly_database_url(database_url_from_config(path, env))
+
+
+def bootstrap_readonly_role(database_url: str) -> dict[str, Any]:
+    """Create or repair the readonly role required by ops SQL tools."""
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute(USER_SCHEMA_SQL)
+            schemas = [row[0] for row in cur.fetchall()]
+
+            cur.execute("select exists(select 1 from pg_roles where rolname = %s)", [READONLY_ROLE])
+            existed = bool(cur.fetchone()[0])
+            if not existed:
+                cur.execute(
+                    sql.SQL("create role {} login").format(sql.Identifier(READONLY_ROLE))
+                )
+
+            cur.execute(
+                sql.SQL("alter role {} set default_transaction_read_only = on").format(
+                    sql.Identifier(READONLY_ROLE)
+                )
+            )
+            cur.execute("select current_database()")
+            database_name = cur.fetchone()[0]
+            cur.execute(
+                sql.SQL("grant connect on database {} to {}").format(
+                    sql.Identifier(database_name),
+                    sql.Identifier(READONLY_ROLE),
+                )
+            )
+
+            for schema in schemas:
+                schema_ident = sql.Identifier(schema)
+                role_ident = sql.Identifier(READONLY_ROLE)
+                cur.execute(
+                    sql.SQL("grant usage on schema {} to {}").format(
+                        schema_ident,
+                        role_ident,
+                    )
+                )
+                cur.execute(
+                    sql.SQL("grant select on all tables in schema {} to {}").format(
+                        schema_ident,
+                        role_ident,
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "alter default privileges in schema {} grant select on tables to {}"
+                    ).format(
+                        schema_ident,
+                        role_ident,
+                    )
+                )
+
+    readonly_url = derive_readonly_database_url(database_url)
+    with psycopg.connect(readonly_url, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute("show default_transaction_read_only")
+            read_only = cur.fetchone()[0] == "on"
+            cur.execute(VISIBLE_TABLE_COUNT_SQL)
+            visible_tables = int(cur.fetchone()[0])
+
+    if not read_only:
+        raise RuntimeError(f"{READONLY_ROLE} is not forced read-only")
+    if visible_tables < 1:
+        raise RuntimeError(f"{READONLY_ROLE} cannot see any user tables")
+
+    return {
+        "role": READONLY_ROLE,
+        "created": not existed,
+        "schemas": schemas,
+        "visible_tables": visible_tables,
+        "read_only": read_only,
+    }
 
 
 async def inspect_schema(

@@ -128,6 +128,24 @@ jobs:
           chmod +x "$RELEASE/stonex-ops"
           INSTALL
 
+      - name: Bootstrap readonly DB role
+        env:
+          SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
+          SSH_USER: ${{ vars.STONEX_SSH_USER }}
+          SSH_PORT: ${{ vars.STONEX_SSH_PORT }}
+        run: |
+          RELEASE="/stonex/ops/releases/${{ github.ref_name }}"
+          SSH_KEY="$RUNNER_TEMP/deploy_key"
+          SSH_ARGS=(-i "$SSH_KEY" -o Port="${SSH_PORT:-22}" -o IdentitiesOnly=yes
+                    -o StrictHostKeyChecking=yes
+                    -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+
+          ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
+            "$RELEASE/stonex-ops" bootstrap-readonly-db \
+              --env main \
+              --path /stonex \
+              --json
+
       - name: Pre-switch smoke (doctor + MCP list_tools on release bundle)
         id: smoke
         env:
