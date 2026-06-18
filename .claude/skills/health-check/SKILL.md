@@ -37,14 +37,16 @@ Run these **in parallel** — they are independent:
 
 ```sql
 -- Active tenants
-SELECT tenant, status, ops_tag, created_at FROM dim.dim_tenant WHERE status = 'active' ORDER BY tenant;
+SELECT tenant_id, status, ops_tag, created_at FROM dim.dim_tenant WHERE status = 'active' ORDER BY tenant_id;
 
--- Latest report of each kind, per tenant
+-- Latest report of each kind, per tenant (by business period, not created_at)
 SELECT identity, kind, period, status, created_at
-FROM ops.report_run r1
-WHERE (identity, kind, created_at) IN (
-  SELECT identity, kind, MAX(created_at) FROM ops.report_run GROUP BY identity, kind
-)
+FROM (
+  SELECT identity, kind, period, status, created_at,
+    ROW_NUMBER() OVER (PARTITION BY identity, kind ORDER BY period DESC, created_at DESC) AS rn
+  FROM ops.report_run
+) sub
+WHERE rn = 1
 ORDER BY identity, kind;
 
 -- Failed or stuck jobs in last 3 days
