@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "stonex-ops-hk-demo": {
+      "command": "ssh",
+      "args": [
+        "-T", "x-001@8.217.21.240",
+        "/stonex/bin/stonex-ops", "mcp",
+        "--stonx-bin", "/stonex/bin/stonx",
+        "--env", "test",
+        "--path", "/stonex/data",
+        "--audit-file", "/stonex/ops/logs/audit.jsonl"
+      ]
+    },
+    "stonex-ops-hk-main": {
+      "command": "ssh",
+      "args": [
+        "-T", "x-001@8.210.153.233",
+        "/stonex/bin/stonex-ops", "mcp",
+        "--stonx-bin", "/stonex/bin/stonx",
+        "--env", "main",
+        "--path", "/stonex",
+        "--audit-file", "/stonex/ops/logs/audit.jsonl"
+      ]
+    }
+  }
+}
