@@ -77,19 +77,30 @@ JOIN dim.dim_tenant dt ON dt.tenant_id = cps.tenant_id AND dt.status = 'active'
 WHERE cps.status != 'ok';
 ```
 
-### AI usage — yesterday, per user
+### AI usage — yesterday, per user (resolved to display_name + email)
 
 ```sql
-SELECT s.tenant_id, s.user_id,
-  COUNT(DISTINCT s.id) AS sessions,
-  COUNT(m.id) FILTER (WHERE m.role = 'user') AS questions
-FROM ops.ai_sessions s
-JOIN ops.ai_messages m ON m.session_id = s.id
-WHERE s.tenant_id IN (SELECT tenant_id FROM dim.dim_tenant WHERE status = 'active')
-  AND s.created_at >= (CURRENT_DATE - INTERVAL '1 day')::timestamp AT TIME ZONE 'Asia/Shanghai'
-  AND s.created_at < CURRENT_DATE::timestamp AT TIME ZONE 'Asia/Shanghai'
-GROUP BY s.tenant_id, s.user_id
-ORDER BY s.tenant_id, s.user_id;
+SELECT u.tenant_id, u.subject,
+  a.display_name, a.email,
+  u.sessions, u.questions
+FROM (
+  SELECT s.tenant_id, s.subject,
+    COUNT(DISTINCT s.id) AS sessions,
+    COUNT(m.id) FILTER (WHERE m.role = 'user') AS questions
+  FROM ops.ai_sessions s
+  JOIN ops.ai_messages m ON m.session_id = s.id
+  WHERE s.tenant_id IN (SELECT tenant_id FROM dim.dim_tenant WHERE status = 'active')
+    AND s.created_at >= (CURRENT_DATE - INTERVAL '1 day')::timestamp AT TIME ZONE 'Asia/Shanghai'
+    AND s.created_at < CURRENT_DATE::timestamp AT TIME ZONE 'Asia/Shanghai'
+  GROUP BY s.tenant_id, s.subject
+) u
+LEFT JOIN LATERAL (
+  SELECT s.display_name, li.identifier AS email
+  FROM acl.subject s
+  LEFT JOIN acl.login_identity li ON li.subject = s.subject AND li.kind = 'email' AND li.status = 'active'
+  WHERE s.subject = u.subject
+) a ON true
+ORDER BY u.tenant_id, u.questions DESC;
 
 SELECT tenant_id, question_count
 FROM ops.ai_tenant_daily_usage
