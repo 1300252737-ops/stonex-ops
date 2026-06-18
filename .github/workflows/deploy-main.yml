@@ -25,9 +25,10 @@ jobs:
       - run: uv run ruff check .
       - run: uv run pytest
 
-  build:
+  deploy-main:
     needs: lint-and-test
     runs-on: ubuntu-latest
+    environment: main
     steps:
       - uses: actions/checkout@v4
         with: { ref: '${{ github.ref }}' }
@@ -59,27 +60,6 @@ jobs:
             --constraint dist/constraints.txt \
             "$WHEEL"
           tar -C dist/site -czf dist/site.tar.gz .
-      - uses: actions/upload-artifact@v4
-        with:
-          name: stonex-ops-wheel-main
-          path: |
-            dist/stonex_ops-*-py3-none-any.whl
-            dist/site.tar.gz
-            dist/SHA256SUMS
-            dist/RELEASE.json
-            dist/constraints.txt
-          if-no-files-found: error
-
-  deploy-main:
-    needs: build
-    runs-on: ubuntu-latest
-    environment: main
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: stonex-ops-wheel-main
-          path: dist/
 
       - name: Prepare SSH
         env:
