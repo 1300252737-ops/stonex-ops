@@ -59,38 +59,4 @@ LIMIT 10;
 SELECT schedule_id, kind, status, cron, timezone FROM ops.worker_schedules WHERE status = 'active' ORDER BY kind;
 ```
 
-## Phase 3: Output
-
-```
-# StoneX Health Report — <env> @ <timestamp>
-
-## 0. Environment
-| Field | Value |
-|---|---|
-| Environment | <env from ops_env_check: test=hk-demo, main=hk-main> |
-| stonx version | <version> |
-
-## 1. Tenants
-Table: tenant | status | ops_tag | created_at
-
-## 2. Infrastructure (from probe)
-Every probe connection listed. ✅ ok / 🔴 action_required / 🔴 provider_error.
-Group problems at the top.
-
-## 3. Reports
-Table: tenant | kind | period | status | generated_at
-Flag any kind missing a recent run.
-
-## 4. Schedules & Workers
-Active schedules table. Failed/cancelled jobs if any.
-
-## 5. Summary
-| Dimension | Verdict |
-|---|---|
-| Infrastructure | 🟢 / 🟡 / 🔴 |
-| Tenants | ... |
-| Data Sources | ... |
-| Reports | ... |
-| Schedules | ... |
-Action items: bullet list.
-```
+No fixed output format. Present findings grouped by severity (problems first). Use Chinese.

@@ -67,31 +67,4 @@ ORDER BY created_at DESC
 LIMIT 20;
 ```
 
-## Phase 4: Output
-
-Group by severity:
-
-| Status | Meaning | Action |
-|---|---|---|
-| `ok` | Healthy | None |
-| `action_required` | User action needed (auth, config) | Check ext.auth / ext.xhs_shop_auth |
-| `provider_error` | Backend/sync issue | Check ingest_runs, job_watermarks |
-
-```
-## Connection Diagnostics — <env> @ <timestamp>
-
-### 🔴 Requires Action (N)
-| Tenant | Connection | Reason | Detail |
-|---|---|---|---|
-
-### 🟡 Provider Issues (N)
-| Tenant | Connection | Reason | Detail |
-|---|---|---|---|
-
-### 🟢 Healthy (N)
-| Tenant | Connection | Latency |
-|---|---|---|---|
-
-### Recommended Next Steps
-1. ...
-```
+No fixed output format. Present problems by severity with analysis + suggested action. Skip healthy entries. Use Chinese.
