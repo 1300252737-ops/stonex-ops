@@ -19,7 +19,7 @@ def _expand_tilde(raw: str) -> str:
 
 
 def _shared_args(sub) -> None:
-    """Add --stonx-bin, --path, --env, --audit-file to a subparser."""
+    """Add shared host/config arguments to a subparser."""
     sub.add_argument(
         "--stonx-bin",
         default=os.environ.get("STONEX_BIN", "stonx"),
@@ -41,6 +41,24 @@ def _shared_args(sub) -> None:
         "--audit-file",
         default=os.environ.get("STONEX_OPS_AUDIT_FILE", None),
         help="Audit log file path (env: STONEX_OPS_AUDIT_FILE)",
+    )
+    sub.add_argument(
+        "--readonly-database-url",
+        default=os.environ.get("STONEX_OPS_READONLY_DATABASE_URL", None),
+        help=(
+            "Readonly PostgreSQL URL. Defaults to deriving stonex_ops_readonly "
+            "from <path>/<env>/config.toml (env: STONEX_OPS_READONLY_DATABASE_URL)."
+        ),
+    )
+    sub.add_argument(
+        "--readonly-database-url-file",
+        default=os.environ.get("STONEX_OPS_READONLY_DATABASE_URL_FILE", None),
+        help="File containing readonly PostgreSQL URL (env: STONEX_OPS_READONLY_DATABASE_URL_FILE)",
+    )
+    sub.add_argument(
+        "--operator",
+        default=os.environ.get("STONEX_OPS_OPERATOR", None),
+        help="Operator label written to audit records (env: STONEX_OPS_OPERATOR)",
     )
 
 
@@ -83,6 +101,9 @@ def main() -> None:
                 env=args.env,
                 path=path,
                 audit_file=args.audit_file,
+                readonly_database_url=args.readonly_database_url,
+                readonly_database_url_file=args.readonly_database_url_file,
+                operator=args.operator,
             )
         )
 
@@ -92,6 +113,8 @@ def main() -> None:
             env=args.env,
             path=path,
             audit_file=args.audit_file,
+            readonly_database_url=args.readonly_database_url,
+            readonly_database_url_file=args.readonly_database_url_file,
         )
 
         if getattr(args, "json_output", False):

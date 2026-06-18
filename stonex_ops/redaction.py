@@ -22,14 +22,16 @@ SENSITIVE_KEY_PATTERNS: tuple[str, ...] = (
 )
 
 
+def is_sensitive_key(key: str) -> bool:
+    """Return true when a JSON key or SQL column name looks sensitive."""
+    lowered = key.lower()
+    return any(pattern in lowered for pattern in SENSITIVE_KEY_PATTERNS)
+
+
 def redact(value: Any) -> None:
     """Recursively redact sensitive fields in a JSON value (mutates in place)."""
     if isinstance(value, dict):
-        keys_to_redact = [
-            k
-            for k in value
-            if any(pattern in k.lower() for pattern in SENSITIVE_KEY_PATTERNS)
-        ]
+        keys_to_redact = [k for k in value if is_sensitive_key(k)]
         for k in keys_to_redact:
             value[k] = "[redacted]"
         for v in value.values():

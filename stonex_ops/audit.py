@@ -5,6 +5,7 @@ Format: JSONL (one line per entry), written to stderr and an optional file.
 
 from __future__ import annotations
 
+import getpass
 import json
 import sys
 import threading
@@ -29,13 +30,15 @@ class AuditEntry:
     error: Optional[str]
     duration_ms: int
     session_id: str
+    operator: str
 
 
 class AuditLogger:
     """Thread-safe JSONL audit logger."""
 
-    def __init__(self, audit_file: Optional[Path] = None) -> None:
+    def __init__(self, audit_file: Optional[Path] = None, operator: Optional[str] = None) -> None:
         self._session_id = str(uuid.uuid4())
+        self._operator = operator or getpass.getuser()
         self._lock = threading.Lock()
         self._file: Optional[TextIO] = None
         if audit_file:
@@ -44,6 +47,10 @@ class AuditLogger:
     @property
     def session_id(self) -> str:
         return self._session_id
+
+    @property
+    def operator(self) -> str:
+        return self._operator
 
     def log(self, entry: AuditEntry) -> None:
         line = json.dumps(asdict(entry), ensure_ascii=False)

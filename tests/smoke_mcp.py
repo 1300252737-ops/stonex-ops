@@ -31,7 +31,12 @@ async def _run() -> None:
 
     tools = tools_result.tools
     names = [tool.name for tool in tools]
-    assert len(names) >= 6, f"expected >=6 tools, got {len(names)}"
+    assert names == [
+        "ops_env_check",
+        "ops_db_schema",
+        "ops_sql_readonly",
+        "ops_probe_connections",
+    ], f"unexpected tools: {names}"
     assert "ops_env_check" in names, f"missing ops_env_check in {names}"
     assert "ops_probe_connections" in names, "missing ops_probe_connections"
 

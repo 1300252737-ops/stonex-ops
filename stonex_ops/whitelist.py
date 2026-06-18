@@ -1,7 +1,7 @@
-"""Command allowlist: permitted `stonx ctl` commands with parameter limits.
+"""Command allowlist for the remaining stonx subprocess calls.
 
-Upstream CLI contract: `stonx ctl <subcommand> --output json [...]`
-`--output json` is a subcommand-level flag, not a global flag.
+Read-only analysis uses PostgreSQL directly. The allowlist only covers
+`stonx --version` and active `stonx ctl probe` calls.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 _IDENTITY_RE = re.compile(r"^[a-zA-Z0-9\-_]{1,128}$")
-_VALID_STATUSES = frozenset({"queued", "running", "succeeded", "failed", "cancelled"})
 
 
 def is_safe_identity(value: str) -> bool:
@@ -20,35 +19,6 @@ def is_safe_identity(value: str) -> bool:
 
 
 # ---- command classes ----
-
-
-@dataclass(frozen=True)
-class TenantList:
-    """stonx ctl tenant list --output json"""
-
-    def to_args(self, stonx_bin: str, env: str, path: str) -> list[str]:
-        return [
-            stonx_bin, f"--env={env}", f"--path={path}",
-            "ctl", "tenant", "list", "--output=json",
-        ]
-
-
-@dataclass(frozen=True)
-class TenantShow:
-    """stonx ctl tenant show --tenant <id> --output json"""
-
-    tenant: str
-
-    def to_args(self, stonx_bin: str, env: str, path: str) -> list[str]:
-        if not is_safe_identity(self.tenant):
-            raise ValueError(
-                f"invalid tenant identity: {self.tenant}. "
-                "Must be alphanumeric, hyphens, or underscores, max 128 chars."
-            )
-        return [
-            stonx_bin, f"--env={env}", f"--path={path}", "ctl",
-            "tenant", "show", f"--tenant={self.tenant}", "--output=json",
-        ]
 
 
 @dataclass(frozen=True)
@@ -79,65 +49,6 @@ class Probe:
 
 
 @dataclass(frozen=True)
-class WorkerScheduleList:
-    """stonx ctl worker schedule list [--tenant <id>] --output json"""
-
-    tenant: Optional[str] = None
-
-    def to_args(self, stonx_bin: str, env: str, path: str) -> list[str]:
-        args = [
-            stonx_bin, f"--env={env}", f"--path={path}",
-            "ctl", "worker", "schedule", "list",
-        ]
-        if self.tenant:
-            if not is_safe_identity(self.tenant):
-                raise ValueError(
-                    f"invalid tenant identity: {self.tenant}. "
-                    "Must be alphanumeric, hyphens, or underscores, max 128 chars."
-                )
-            args.append(f"--tenant={self.tenant}")
-        args.append("--output=json")
-        return args
-
-
-@dataclass(frozen=True)
-class WorkerJobList:
-    """stonx ctl worker job list [--tenant <id>] [--status <s>] [--limit <n>] --output json"""
-
-    tenant: Optional[str] = None
-    status: Optional[str] = None
-    limit: Optional[int] = None
-
-    def to_args(self, stonx_bin: str, env: str, path: str) -> list[str]:
-        args = [
-            stonx_bin, f"--env={env}", f"--path={path}",
-            "ctl", "worker", "job", "list",
-        ]
-        if self.tenant:
-            if not is_safe_identity(self.tenant):
-                raise ValueError(
-                    f"invalid tenant identity: {self.tenant}. "
-                    "Must be alphanumeric, hyphens, or underscores, max 128 chars."
-                )
-            args.append(f"--tenant={self.tenant}")
-        if self.status:
-            if self.status not in _VALID_STATUSES:
-                raise ValueError(
-                    f"invalid job status: {self.status}. "
-                    "Valid: queued, running, succeeded, failed, cancelled."
-                )
-            args.append(f"--status={self.status}")
-        if self.limit is not None:
-            if self.limit < 1 or self.limit > 500:
-                raise ValueError(
-                    f"limit out of range: {self.limit}. Must be 1-500."
-                )
-            args.append(f"--limit={self.limit}")
-        args.append("--output=json")
-        return args
-
-
-@dataclass(frozen=True)
 class StonxVersion:
     """stonx --version"""
 
@@ -157,10 +68,7 @@ class ProbeAll:
 
 
 # Discriminated union type
-AllowedCommand = (
-    TenantList | TenantShow | Probe | WorkerScheduleList
-    | WorkerJobList | StonxVersion | ProbeAll
-)
+AllowedCommand = Probe | StonxVersion | ProbeAll
 
 
 def op_kind(cmd: AllowedCommand) -> str:

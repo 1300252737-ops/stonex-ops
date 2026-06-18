@@ -1,8 +1,9 @@
 """MCP server: stdio JSON-RPC server built on the `mcp` SDK.
 
 Key differences from stonex-mcp:
-- No DB connection, no dependency on stonex source.
-- Tools call `stonx ctl ... --output json` exclusively.
+- No dependency on stonex source.
+- Active probes call `stonx ctl probe`; read-only analysis uses PostgreSQL
+  through the `stonex_ops_readonly` role.
 - Command allowlist + input validation + audit log + output redaction.
 
 Probe boundary: only `ops_probe_connections` triggers `stonx ctl probe`,
@@ -30,6 +31,7 @@ from mcp.types import (
 
 from stonex_ops import tools
 from stonex_ops.audit import AuditEntry, AuditLogger, AuditStatus
+from stonex_ops.db import DEFAULT_MAX_ROWS, MAX_MAX_ROWS, resolve_readonly_database_url
 from stonex_ops.executor import ExecutionError, execute
 from stonex_ops.redaction import redact
 from stonex_ops.whitelist import StonxVersion
@@ -68,32 +70,51 @@ TOOL_DEFINITIONS: list[Tool] = [
         annotations=_RO_ANNOTATIONS,
     ),
     Tool(
-        name="ops_tenant_list",
+        name="ops_db_schema",
         description=(
-            "List all tenants with identity, status, and connection-state summary."
+            "Inspect the PostgreSQL schema visible to stonex_ops_readonly. "
+            "Use this before writing SQL when table or column names are unknown."
         ),
         inputSchema={
             "type": "object",
-            "properties": {},
+            "properties": {
+                "schema": {
+                    "type": "string",
+                    "description": "Optional PostgreSQL schema name, e.g. ops or dim.",
+                },
+                "table": {
+                    "type": "string",
+                    "description": "Optional table name. May be schema-qualified.",
+                },
+            },
             "additionalProperties": False,
         },
         annotations=_RO_ANNOTATIONS,
     ),
     Tool(
-        name="ops_tenant_show",
+        name="ops_sql_readonly",
         description=(
-            "Show a single tenant's detailed onboarding state: "
-            "identity, ops tag, status, shop scope, connections, and auth status."
+            "Execute caller-provided PostgreSQL SQL through the stonex_ops_readonly "
+            "role. SQL is not templated or parsed by stonex-ops; the database role, "
+            "statement_timeout, client timeout, and output redaction are the safety boundary."
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "tenant": {
+                "sql": {
                     "type": "string",
-                    "description": "Tenant identity (system-generated)",
+                    "description": "SQL to execute.",
+                },
+                "max_rows": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": MAX_MAX_ROWS,
+                    "description": (
+                        f"Maximum rows returned per result set (default {DEFAULT_MAX_ROWS})."
+                    ),
                 },
             },
-            "required": ["tenant"],
+            "required": ["sql"],
             "additionalProperties": False,
         },
         annotations=_RO_ANNOTATIONS,
@@ -105,8 +126,7 @@ TOOL_DEFINITIONS: list[Tool] = [
             "provider, freshness, report readiness, AI model ping, "
             "and mail transport checks. "
             "This is the ONLY tool that triggers `stonx ctl probe`, "
-            "which may write `ops.connection_probe_state` through stonx "
-            "(stonex-ops itself never connects to the database)."
+            "which may write `ops.connection_probe_state` through stonx."
         ),
         inputSchema={
             "type": "object",
@@ -124,70 +144,6 @@ TOOL_DEFINITIONS: list[Tool] = [
         },
         annotations=_PROBE_ANNOTATIONS,
     ),
-    Tool(
-        name="ops_worker_jobs",
-        description=(
-            "List worker jobs: queued, running, succeeded, failed, or cancelled "
-            "jobs for daily/weekly report generation."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "tenant": {
-                    "type": "string",
-                    "description": "Optional: filter by tenant.",
-                },
-                "status": {
-                    "type": "string",
-                    "enum": ["queued", "running", "succeeded", "failed", "cancelled"],
-                    "description": "Optional: filter by job status.",
-                },
-                "limit": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 500,
-                    "description": "Optional: max results (default 50).",
-                },
-            },
-            "additionalProperties": False,
-        },
-        annotations=_RO_ANNOTATIONS,
-    ),
-    Tool(
-        name="ops_worker_schedules",
-        description=(
-            "List worker schedules: cron expression, status (active/paused), timezone."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "tenant": {
-                    "type": "string",
-                    "description": "Optional: filter by tenant.",
-                },
-            },
-            "additionalProperties": False,
-        },
-        annotations=_RO_ANNOTATIONS,
-    ),
-    Tool(
-        name="ops_report_status",
-        description=(
-            "Show recent report generation status: "
-            "latest successful daily/weekly reports and recent job list."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "tenant": {
-                    "type": "string",
-                    "description": "Optional: filter by tenant.",
-                },
-            },
-            "additionalProperties": False,
-        },
-        annotations=_RO_ANNOTATIONS,
-    ),
 ]
 
 
@@ -201,11 +157,13 @@ class ServerState:
         stonx_bin: str,
         env: str,
         path: str,
+        readonly_database_url: Optional[str],
         logger: AuditLogger,
     ) -> None:
         self.stonx_bin = stonx_bin
         self.env = env
         self.path = path
+        self.readonly_database_url = readonly_database_url
         self.logger = logger
         self.semaphore = asyncio.Semaphore(MAX_CONCURRENT_CALLS)
 
@@ -240,6 +198,24 @@ def _optional_int(args: dict[str, Any], key: str) -> Optional[int]:
     raise ValueError(f"invalid argument: {key} must be an integer")
 
 
+def _max_rows(args: dict[str, Any]) -> int:
+    value = _optional_int(args, "max_rows")
+    if value is None:
+        return DEFAULT_MAX_ROWS
+    if value < 1 or value > MAX_MAX_ROWS:
+        raise ValueError(f"invalid argument: max_rows must be between 1 and {MAX_MAX_ROWS}")
+    return value
+
+
+def _readonly_database_url(state: ServerState) -> str:
+    if not state.readonly_database_url:
+        raise ValueError(
+            "readonly database URL is unavailable; pass --readonly-database-url "
+            "or ensure <path>/<env>/config.toml contains [database].url"
+        )
+    return state.readonly_database_url
+
+
 # ---- Tool dispatch ----
 
 async def _execute_tool(
@@ -255,31 +231,19 @@ async def _execute_tool(
     if name == "ops_env_check":
         return await tools.env_check(bin_, env, path)
 
-    elif name == "ops_tenant_list":
-        return await tools.tenant_list(bin_, env, path)
+    elif name == "ops_db_schema":
+        schema = _optional_string(arguments, "schema")
+        table = _optional_string(arguments, "table")
+        return await tools.db_schema(_readonly_database_url(state), schema, table)
 
-    elif name == "ops_tenant_show":
-        tenant = _require_string(arguments, "tenant")
-        return await tools.tenant_show(bin_, env, path, tenant)
+    elif name == "ops_sql_readonly":
+        sql = _require_string(arguments, "sql")
+        return await tools.sql_readonly(_readonly_database_url(state), sql, _max_rows(arguments))
 
     elif name == "ops_probe_connections":
         tenant = _optional_string(arguments, "tenant")
         shop_id = _optional_string(arguments, "shop_id")
         return await tools.probe_connections(bin_, env, path, tenant, shop_id)
-
-    elif name == "ops_worker_jobs":
-        tenant = _optional_string(arguments, "tenant")
-        status = _optional_string(arguments, "status")
-        limit = _optional_int(arguments, "limit")
-        return await tools.worker_jobs(bin_, env, path, tenant, status, limit)
-
-    elif name == "ops_worker_schedules":
-        tenant = _optional_string(arguments, "tenant")
-        return await tools.worker_schedules(bin_, env, path, tenant)
-
-    elif name == "ops_report_status":
-        tenant = _optional_string(arguments, "tenant")
-        return await tools.report_status(bin_, env, path, tenant)
 
     else:
         raise ValueError(f"unknown tool: {name}")
@@ -369,6 +333,7 @@ def _create_server(state: ServerState) -> Server:
                     error=error_msg,
                     duration_ms=duration_ms,
                     session_id=ctx_state.logger.session_id,
+                    operator=ctx_state.logger.operator,
                 ))
 
     return server
@@ -381,10 +346,13 @@ async def run_mcp_server(
     env: str,
     path: str,
     audit_file: Optional[str] = None,
+    readonly_database_url: Optional[str] = None,
+    readonly_database_url_file: Optional[str] = None,
+    operator: Optional[str] = None,
 ) -> None:
     """Start the MCP server (stdio JSON-RPC)."""
     audit_path = Path(audit_file) if audit_file else None
-    logger = AuditLogger(audit_path)
+    logger = AuditLogger(audit_path, operator=operator)
 
     # Startup check: only verify the stonx binary is reachable.
     # We intentionally do NOT call env_check (which no longer runs probe)
@@ -398,10 +366,23 @@ async def run_mcp_server(
     except Exception as exc:
         print(f"startup check warning: {exc}", file=sys.stderr)
 
+    try:
+        resolved_readonly_database_url = resolve_readonly_database_url(
+            path=path,
+            env=env,
+            readonly_database_url=readonly_database_url,
+            readonly_database_url_file=readonly_database_url_file,
+        )
+        print("startup check: readonly database URL resolved", file=sys.stderr)
+    except Exception as exc:
+        resolved_readonly_database_url = None
+        print(f"startup check warning: readonly database URL unavailable: {exc}", file=sys.stderr)
+
     state = ServerState(
         stonx_bin=stonx_bin,
         env=env,
         path=path,
+        readonly_database_url=resolved_readonly_database_url,
         logger=logger,
     )
 

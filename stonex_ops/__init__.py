@@ -4,13 +4,15 @@ Two-layer boundary:
 
     MCP client / agent
       -> stonex-ops mcp (stdio JSON-RPC)
-      -> allowlisted stonx ctl ... --output json
-      -> stonx runtime / DB / provider probes
+      -> readonly PostgreSQL schema/SQL tools
+      -> allowlisted stonx ctl probe for active connection checks
 
 Key principles:
-- No direct database connection, no dependency on stonex source.
-- Only calls `stonx ctl ... --output json` contracts.
-- Command allowlist + input validation + audit log + output redaction.
+- No dependency on stonex source.
+- No query registry; callers write SQL after inspecting schema.
+- PostgreSQL readonly role, DB timeout, client timeout, and output redaction are
+  the SQL safety boundary.
+- Audit log every MCP tool call.
 - Read-only diagnostics plus one explicit active probe boundary.
 
 Probe boundary: only `ops_probe_connections` triggers

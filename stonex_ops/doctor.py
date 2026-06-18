@@ -3,8 +3,8 @@
 Checks:
 - stonx binary exists and is executable (PATH-aware).
 - stonx --version works.
-- Required `ctl ... --output json` contracts are available
-  (capability probe, not version-string check).
+- readonly database URL resolves.
+- readonly database can inspect schema and execute select 1.
 - Audit file directory is writable.
 - MCP tool definitions are present.
 
@@ -13,17 +13,15 @@ All checks are read-only. Probe is never invoked.
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from stonex_ops.executor import ExecutionError, execute
+from stonex_ops.db import resolve_readonly_database_url
 from stonex_ops.server import TOOL_DEFINITIONS
-from stonex_ops.tools import env_check
-from stonex_ops.whitelist import TenantList, WorkerJobList, WorkerScheduleList
+from stonex_ops.tools import db_schema, env_check, sql_readonly
 
 
 @dataclass
@@ -42,6 +40,8 @@ async def run_doctor(
     env: str,
     path: str,
     audit_file: Optional[str] = None,
+    readonly_database_url: Optional[str] = None,
+    readonly_database_url_file: Optional[str] = None,
 ) -> DoctorResult:
     result = DoctorResult()
 
@@ -71,26 +71,36 @@ async def run_doctor(
         result.add("stonx_version", False, "stonx --version failed")
         return result
 
-    # 3. Compatibility: verify key read-only `ctl ... --output json` contracts
-    #    used by the MCP tools (tenant list, worker jobs, worker schedules).
-    ctl_contracts: list[tuple[str, Any]] = [
-        ("tenant_list", TenantList()),
-        ("worker_jobs", WorkerJobList(limit=1)),
-        ("worker_schedules", WorkerScheduleList()),
-    ]
-    all_ok = True
-    for label, cmd in ctl_contracts:
-        try:
-            output = await execute(stonx_bin, env, path, cmd)
-            json.loads(output)  # must be valid JSON
-            result.add(f"stonx_ctl_{label}", True, "ok")
-        except ExecutionError as exc:
-            all_ok = False
-            result.add(f"stonx_ctl_{label}", False, str(exc))
-        except Exception as exc:
-            all_ok = False
-            result.add(f"stonx_ctl_{label}", False, f"{type(exc).__name__}: {exc}")
-    if not all_ok:
+    # 3. Readonly DB capability used by ops_db_schema / ops_sql_readonly.
+    try:
+        resolved_readonly_url = resolve_readonly_database_url(
+            path=path,
+            env=env,
+            readonly_database_url=readonly_database_url,
+            readonly_database_url_file=readonly_database_url_file,
+        )
+        result.add("readonly_database_url", True, "resolved")
+    except Exception as exc:
+        result.add("readonly_database_url", False, f"{type(exc).__name__}: {exc}")
+        return result
+
+    try:
+        schema_result = await db_schema(resolved_readonly_url)
+        result.add(
+            "ops_db_schema",
+            schema_result.get("table_count", 0) > 0,
+            f"{schema_result.get('table_count', 0)} tables visible",
+        )
+    except Exception as exc:
+        result.add("ops_db_schema", False, f"{type(exc).__name__}: {exc}")
+        return result
+
+    try:
+        query_result = await sql_readonly(resolved_readonly_url, "select 1 as ok", 1)
+        ok = query_result.get("rows") == [[1]]
+        result.add("ops_sql_readonly", ok, "select 1")
+    except Exception as exc:
+        result.add("ops_sql_readonly", False, f"{type(exc).__name__}: {exc}")
         return result
 
     # 4. Audit file is writable (directory + file itself)
@@ -118,13 +128,19 @@ async def run_doctor(
 
     # 5. MCP tool definitions are present
     tool_names = [t.name for t in TOOL_DEFINITIONS]
-    if len(tool_names) >= 6:
+    expected_tools = {
+        "ops_env_check",
+        "ops_db_schema",
+        "ops_sql_readonly",
+        "ops_probe_connections",
+    }
+    if set(tool_names) == expected_tools:
         result.add(
             "mcp_tools", True,
             f"{len(tool_names)} tools: {', '.join(tool_names)}",
         )
     else:
-        result.add("mcp_tools", False, f"only {len(tool_names)} tools found")
+        result.add("mcp_tools", False, f"unexpected tools: {', '.join(tool_names)}")
 
     return result
 
@@ -134,7 +150,18 @@ def run_doctor_sync(
     env: str,
     path: str,
     audit_file: Optional[str] = None,
+    readonly_database_url: Optional[str] = None,
+    readonly_database_url_file: Optional[str] = None,
 ) -> DoctorResult:
     """Sync wrapper for CLI usage."""
     import asyncio
-    return asyncio.run(run_doctor(stonx_bin, env, path, audit_file))
+    return asyncio.run(
+        run_doctor(
+            stonx_bin,
+            env,
+            path,
+            audit_file,
+            readonly_database_url,
+            readonly_database_url_file,
+        )
+    )
