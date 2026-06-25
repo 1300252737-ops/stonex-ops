@@ -68,6 +68,18 @@ def main() -> None:
         help="Output result as JSON",
     )
 
+    # ---- push ----
+    push_parser = sub.add_parser(
+        "push",
+        help="Probe connections and push Feishu alert on failure",
+    )
+    _shared_args(push_parser)
+    push_parser.add_argument(
+        "--tenant",
+        required=True,
+        help="Tenant identity to probe",
+    )
+
     args = parser.parse_args()
     path = _expand_tilde(args.path)
 
@@ -85,6 +97,15 @@ def main() -> None:
                 audit_file=args.audit_file,
             )
         )
+
+    elif args.command == "push":
+        asyncio.run(_run_push(
+            stonx_bin=args.stonx_bin,
+            env=args.env,
+            path=path,
+            tenant=args.tenant,
+        ))
+        sys.exit(0)
 
     elif args.command == "doctor":
         result = run_doctor_sync(
@@ -107,3 +128,24 @@ def main() -> None:
         if not result.passed:
             sys.exit(1)
         sys.exit(0)
+
+
+async def _run_push(
+    stonx_bin: str,
+    env: str,
+    path: str,
+    tenant: str,
+) -> None:
+    """Probe connections for a tenant and push Feishu alert on failure."""
+    from stonex_ops.tools.probe_connections import run as run_probe
+
+    result = await run_probe(stonx_bin, env, path, tenant=tenant)
+    problem_count = result.get("problem_count", 0)
+    if problem_count > 0:
+        c = result.get("check_count", "?")
+        print(
+            f"probe: {problem_count}/{c} problems — feishu alert pushed",
+            file=sys.stderr,
+        )
+    else:
+        print("probe: all connections ok — no alert needed", file=sys.stderr)
