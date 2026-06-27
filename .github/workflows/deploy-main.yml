@@ -1,4 +1,4 @@
-name: Deploy HK Main
+name: Deploy Main
 
 on:
   push:

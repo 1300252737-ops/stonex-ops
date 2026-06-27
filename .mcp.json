@@ -1,9 +1,9 @@
 {
   "mcpServers": {
-    "stonex-ops-hk-demo": {
+    "stonex-ops-demo": {
       "command": "ssh",
       "args": [
-        "-T", "x-001@8.217.21.240",
+        "-T", "x-001@115.29.237.229",
         "/stonex/bin/stonex-ops", "mcp",
         "--stonx-bin", "/stonex/bin/stonx",
         "--env", "test",
@@ -11,10 +11,10 @@
         "--audit-file", "/stonex/ops/logs/audit.jsonl"
       ]
     },
-    "stonex-ops-hk-main": {
+    "stonex-ops-main": {
       "command": "ssh",
       "args": [
-        "-T", "x-001@8.210.153.233",
+        "-T", "x-001@47.99.40.217",
         "/stonex/bin/stonex-ops", "mcp",
         "--stonx-bin", "/stonex/bin/stonx",
         "--env", "main",

@@ -42,10 +42,10 @@ pip install -e .
 stonex-ops mcp --stonx-bin /path/to/stonx --env test
 ```
 
-### SSH remote (production HK main)
+### SSH remote (production main)
 
 ```bash
-ssh -T x-001@<target-host> /stonex/bin/stonex-ops mcp \
+ssh -T x-001@47.99.40.217 /stonex/bin/stonex-ops mcp \
   --stonx-bin /stonex/bin/stonx \
   --env main \
   --path /stonex \
@@ -60,7 +60,7 @@ Claude Code MCP config:
     "stonex-ops": {
       "command": "ssh",
       "args": [
-        "-T", "x-001@<target-host>",
+        "-T", "x-001@47.99.40.217",
         "/stonex/bin/stonex-ops", "mcp",
         "--stonx-bin", "/stonex/bin/stonx",
         "--env", "main",
@@ -71,6 +71,16 @@ Claude Code MCP config:
   }
 }
 ```
+
+Current remote targets:
+
+| Environment | Host | Runtime | Notes |
+|-------------|------|---------|-------|
+| main | `47.99.40.217` | `/stonex`, `--env main` | Hangzhou EIP for `stonex.yuece.cn`. |
+| demo | `115.29.237.229` | `/stonex/data`, `--env test` | Hangzhou demo and Chatwoot host. |
+
+The previous HK hosts are fallback redirects only and must not be used as
+stonex-ops targets.
 
 ### MCP Tools
 
