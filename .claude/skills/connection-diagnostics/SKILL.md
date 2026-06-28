@@ -9,13 +9,13 @@ Run a targeted connection probe and surface actionable diagnosis.
 
 ## Phase 0: Environment routing
 
-Two MCP servers are available. All tools are prefixed `mcp__stonex-ops-hk-<env>__`.
+Two MCP servers are available. All tools are prefixed `mcp__stonex-ops-<env>__`.
 Pick the target based on the user's words:
 
 | User says | Use MCP server |
 |---|---|
-| "demo", "测试", "演示", "test" | `stonex-ops-hk-demo` |
-| "main", "生产", "正式", "prod", "主" | `stonex-ops-hk-main` |
+| "demo", "测试", "演示", "test" | `stonex-ops-demo` |
+| "main", "生产", "正式", "prod", "主" | `stonex-ops-main` |
 | "两边", "all", "全部", "都", "两个" | Run **both** |
 | No environment mentioned | Ask: "hk-demo or hk-main?" |
 

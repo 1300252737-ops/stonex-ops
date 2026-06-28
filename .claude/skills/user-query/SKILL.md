@@ -9,13 +9,13 @@ Query AI usage per user/tenant for a date range. Shows question count, session c
 
 ## Phase 0: Environment routing
 
-Two MCP servers are available. All tools are prefixed `mcp__stonex-ops-hk-<env>__`.
+Two MCP servers are available. All tools are prefixed `mcp__stonex-ops-<env>__`.
 
 | User says | Use MCP server |
 |---|---|
-| "demo", "测试", "演示", "test" | `stonex-ops-hk-demo` |
-| "main", "生产", "正式", "prod", "主" | `stonex-ops-hk-main` |
-| No environment mentioned | Default to `stonex-ops-hk-main` |
+| "demo", "测试", "演示", "test" | `stonex-ops-demo` |
+| "main", "生产", "正式", "prod", "主" | `stonex-ops-main` |
+| No environment mentioned | Default to `stonex-ops-main` |
 
 ## Phase 1: Determine scope
 
