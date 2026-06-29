@@ -16,7 +16,7 @@ Two MCP servers are available. All tools are prefixed `mcp__stonex-ops-<env>__`.
 | "demo", "测试", "演示", "test" | `stonex-ops-demo` |
 | "main", "生产", "正式", "prod", "主" | `stonex-ops-main` |
 | "两边", "all", "全部", "都", "两个" | Run both, side-by-side |
-| No environment mentioned | Ask |
+| No environment mentioned | Default to `stonex-ops-main` |
 
 ## Phase 1: Identify environment
 
@@ -43,18 +43,20 @@ Run the matching curl command. Record HTTP status code and response time.
 SELECT tenant_id, ops_tag FROM dim.dim_tenant WHERE status = 'active';
 ```
 
-### Reports — latest build per tenant per kind
+### Reports — latest build per tenant per kind per shop
+
+`report_run` has a `shop_id` column — daily reports are per-shop, not per-tenant.
 
 ```sql
-SELECT identity, kind, period, status, created_at
+SELECT identity, kind, period, shop_id, status, created_at
 FROM (
-  SELECT identity, kind, period, status, created_at,
-    ROW_NUMBER() OVER (PARTITION BY identity, kind ORDER BY period DESC, created_at DESC) AS rn
+  SELECT identity, kind, period, shop_id, status, created_at,
+    ROW_NUMBER() OVER (PARTITION BY identity, kind, shop_id ORDER BY period DESC, created_at DESC) AS rn
   FROM ops.report_run
   WHERE identity IN (SELECT tenant_id FROM dim.dim_tenant WHERE status = 'active')
 ) sub
 WHERE rn = 1
-ORDER BY identity, kind;
+ORDER BY identity, kind, shop_id;
 ```
 
 ### Worker jobs — report_daily (last 48h, to see attempts + retries)
@@ -79,13 +81,15 @@ WHERE cps.status != 'ok';
 
 ### AI usage — yesterday, per user (resolved to display_name + email)
 
+Note: `sessions` column gets `[redacted]` by MCP — skip it.
+
 ```sql
-SELECT u.tenant_id, u.subject,
-  a.display_name, a.email,
-  u.sessions, u.questions
+SELECT u.tenant_id,
+  COALESCE(a.display_name, u.subject) AS display_name,
+  COALESCE(a.email, '') AS email,
+  u.questions
 FROM (
   SELECT s.tenant_id, s.subject,
-    COUNT(DISTINCT s.id) AS sessions,
     COUNT(m.id) FILTER (WHERE m.role = 'user') AS questions
   FROM ops.ai_sessions s
   JOIN ops.ai_messages m ON m.session_id = s.id
