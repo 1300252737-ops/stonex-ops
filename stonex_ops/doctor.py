@@ -133,6 +133,7 @@ async def run_doctor(
         "ops_db_schema",
         "ops_sql_readonly",
         "ops_probe_connections",
+        "ops_notification_publish",
     }
     if set(tool_names) == expected_tools:
         result.add(
