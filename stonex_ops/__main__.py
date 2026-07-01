@@ -92,6 +92,24 @@ def main() -> None:
         help="Output result as JSON",
     )
 
+    # ---- alert ----
+    alert_parser = sub.add_parser(
+        "alert",
+        help="Probe connections and publish alerts on failure",
+    )
+    _shared_args(alert_parser)
+    alert_parser.add_argument(
+        "--tenant",
+        required=True,
+        help="Tenant identity to probe",
+    )
+    alert_parser.add_argument(
+        "--target",
+        action="append",
+        default=None,
+        help="Recipient open_id (ou_) or chat_id (oc_). Repeatable. Defaults to env vars.",
+    )
+
     # ---- bootstrap-readonly-db ----
     bootstrap_parser = sub.add_parser(
         "bootstrap-readonly-db",
@@ -125,6 +143,16 @@ def main() -> None:
                 operator=args.operator,
             )
         )
+
+    elif args.command == "alert":
+        asyncio.run(_run_alert(
+            stonx_bin=args.stonx_bin,
+            env=args.env,
+            path=path,
+            tenant=args.tenant,
+            target=getattr(args, "target", None),
+        ))
+        sys.exit(0)
 
     elif args.command == "doctor":
         result = run_doctor_sync(
@@ -172,6 +200,57 @@ def main() -> None:
                 f"{result['visible_tables']} tables visible across {len(result['schemas'])} schemas"
             )
         sys.exit(0)
+
+
+async def _run_alert(
+    stonx_bin: str,
+    env: str,
+    path: str,
+    tenant: str,
+    target: list[str] | None = None,
+) -> None:
+    """Probe connections and publish alerts on failure."""
+    from stonex_ops.tools.notification_publish import ready
+    from stonex_ops.tools.notification_publish import run as run_publish
+    from stonex_ops.tools.probe_connections import run as run_probe
+
+    result = await run_probe(stonx_bin, env, path, tenant=tenant)
+    connections = result.get("connections", [])
+    problem_count = result.get("problem_count", 0)
+
+    if problem_count == 0:
+        print("probe: all connections ok — no alert needed", file=sys.stderr)
+        return
+
+    if not ready():
+        print(
+            "probe: feishu channel not configured — skipping publish",
+            file=sys.stderr,
+        )
+        return
+
+    scopes_list = result.get("scopes") or []
+    tag = (scopes_list[0].get("tenant_tag") if scopes_list else None)
+    tag = tag or tenant
+    outcome = await run_publish(tenant, tag, connections, target)
+    if "status" in outcome:
+        # publish found no data-source problems after filtering
+        print(
+            f"probe: {problem_count}/{result.get('check_count', '?')} raw problems"
+            f" — data sources all healthy, no alert sent",
+            file=sys.stderr,
+        )
+        return
+    if "error" in outcome:
+        print(f"publish failed: {outcome['error']}", file=sys.stderr)
+        sys.exit(1)
+    cards = outcome.get("cards", [])
+    card_count = len(cards)
+    print(
+        f"probe: {problem_count}/{result.get('check_count', '?')} problems"
+        f" — {card_count} alert card(s) sent",
+        file=sys.stderr,
+    )
 
 
 if __name__ == "__main__":

@@ -7,12 +7,14 @@ applies final output redaction before returning data to the MCP client.
 
 from stonex_ops.tools.db_schema import run as db_schema
 from stonex_ops.tools.env_check import run as env_check
+from stonex_ops.tools.notification_publish import run as notification_publish
 from stonex_ops.tools.probe_connections import run as probe_connections
 from stonex_ops.tools.sql_readonly import run as sql_readonly
 
 __all__ = [
     "env_check",
     "probe_connections",
+    "notification_publish",
     "db_schema",
     "sql_readonly",
 ]

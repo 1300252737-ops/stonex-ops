@@ -6,6 +6,8 @@ mail readiness checks.
 
 This is the ONLY tool that triggers `stonx ctl probe`, which may write
 `ops.connection_probe_state` through stonx.
+
+Read-only — does not send notifications.
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ async def run(
                 entry["tenant"] = scope["tenant"]
             if "shop_id" in scope:
                 entry["shop_id"] = scope["shop_id"]
+                entry["shop_label"] = scope.get("shop_label", scope["shop_id"])
             all_connections.append(entry)
 
     scope_info = None
@@ -49,6 +52,7 @@ async def run(
 
     return {
         "scope": scope_info,
+        "scopes": parsed.get("scopes", []),
         "result": parsed.get("result"),
         "check_count": parsed.get("check_count"),
         "problem_count": parsed.get("problem_count"),

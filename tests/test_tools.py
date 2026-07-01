@@ -29,6 +29,7 @@ def test_tool_set_is_minimal():
         "ops_db_schema",
         "ops_sql_readonly",
         "ops_probe_connections",
+        "ops_notification_publish",
     ]
 
 

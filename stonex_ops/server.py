@@ -144,6 +144,48 @@ TOOL_DEFINITIONS: list[Tool] = [
         },
         annotations=_PROBE_ANNOTATIONS,
     ),
+    Tool(
+        name="ops_notification_publish",
+        description=(
+            "Explicitly send a notification via a channel. "
+            "Currently supports channel=feishu for connection alert cards. "
+            "Returns {message_id} on success or {error} on failure."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "channel": {
+                    "type": "string",
+                    "description": "Notification channel (currently: feishu).",
+                },
+                "tenant": {
+                    "type": "string",
+                    "description": "Tenant identity.",
+                },
+                "tenant_name": {
+                    "type": "string",
+                    "description": "Display name for the tenant.",
+                },
+                "connections": {
+                    "type": "array",
+                    "description": (
+                        "Connection probe results. "
+                        "Each element: {connection_id, status, reason_code, message, checked_at}."
+                    ),
+                },
+                "target": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Recipient IDs: open_id (ou_) for users, chat_id (oc_) for groups. "
+                        "Defaults to FEISHU_USER_OPEN_ID + FEISHU_CHAT_ID env vars."
+                    ),
+                },
+            },
+            "required": ["channel", "tenant", "tenant_name", "connections"],
+            "additionalProperties": False,
+        },
+    ),
 ]
 
 
@@ -244,6 +286,16 @@ async def _execute_tool(
         tenant = _optional_string(arguments, "tenant")
         shop_id = _optional_string(arguments, "shop_id")
         return await tools.probe_connections(bin_, env, path, tenant, shop_id)
+
+    elif name == "ops_notification_publish":
+        channel = _require_string(arguments, "channel")
+        if channel != "feishu":
+            raise ValueError(f"unsupported channel: {channel}")
+        tenant = _require_string(arguments, "tenant")
+        tenant_name = _require_string(arguments, "tenant_name")
+        connections = arguments.get("connections", [])
+        target = arguments.get("target")
+        return await tools.notification_publish(tenant, tenant_name, connections, target)
 
     else:
         raise ValueError(f"unknown tool: {name}")
