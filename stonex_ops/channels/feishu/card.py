@@ -62,23 +62,9 @@ def build_alert_card(
 
 def _button_row(url: str) -> dict[str, Any]:
     return {
-        "tag": "column_set",
-        "flex_mode": "bisect",
-        "background_style": "default",
-        "columns": [
-            {
-                "tag": "column",
-                "width": "weighted",
-                "weight": 1,
-                "elements": [
-                    {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "\U0001f527 管理连接"},
-                        "type": "default",
-                        "width": "fill",
-                        "behaviors": [{"type": "open_url", "default_url": url}],
-                    }
-                ],
-            },
-        ],
+        "tag": "button",
+        "text": {"tag": "plain_text", "content": "\U0001f527 管理连接"},
+        "type": "default",
+        "width": "default",
+        "behaviors": [{"type": "open_url", "default_url": url}],
     }
