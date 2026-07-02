@@ -74,7 +74,7 @@ async def run(
 
     now = datetime.now(timezone.utc).astimezone().strftime("%m-%d %H:%M")
     base = manage_base_url or "https://stonex.yuece.tech"
-    manage_url = f"{base}/t/{tenant}/"
+    manage_url = f"{base}/t/{tenant}/connections"
 
     all_results: list[dict[str, Any]] = []
     for shop, conns in problem_shops.items():
