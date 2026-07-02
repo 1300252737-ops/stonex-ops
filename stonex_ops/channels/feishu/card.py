@@ -75,21 +75,7 @@ def _button_row(url: str) -> dict[str, Any]:
                         "tag": "button",
                         "text": {"tag": "plain_text", "content": "\U0001f527 管理连接"},
                         "type": "default",
-                        "width": "default",
-                        "behaviors": [{"type": "open_url", "default_url": url}],
-                    }
-                ],
-            },
-            {
-                "tag": "column",
-                "width": "weighted",
-                "weight": 1,
-                "elements": [
-                    {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "\U0001f504 重试探活"},
-                        "type": "primary",
-                        "width": "default",
+                        "width": "fill",
                         "behaviors": [{"type": "open_url", "default_url": url}],
                     }
                 ],
