@@ -124,10 +124,10 @@ jobs:
                     -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
 
           ssh "${SSH_ARGS[@]}" "${SSH_USER}@${SSH_HOST}" \
-            "$RELEASE/stonex-ops" bootstrap-readonly-db \
-              --env main \
-              --path /stonex \
-              --json
+            sudo -n -u stonex "$RELEASE/stonex-ops" bootstrap-readonly-db \
+                --env main \
+                --path /stonex \
+                --json
 
       - name: Pre-switch smoke (doctor + MCP list_tools on release bundle)
         id: smoke
