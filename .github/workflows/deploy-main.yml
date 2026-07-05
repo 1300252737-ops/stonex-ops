@@ -102,6 +102,9 @@ jobs:
           #!/usr/bin/env bash
           set -euo pipefail
           release="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+          if [[ -z "${STONEX_OPS_READONLY_DATABASE_URL_FILE:-}" ]]; then
+            export STONEX_OPS_READONLY_DATABASE_URL_FILE=/stonex/ops/main-readonly-database-url
+          fi
           export PYTHONPATH="$release/site${PYTHONPATH:+:$PYTHONPATH}"
           exec python3.12 -m stonex_ops "$@"
           WRAPPER
