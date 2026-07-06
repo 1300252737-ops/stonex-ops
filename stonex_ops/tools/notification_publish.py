@@ -10,6 +10,7 @@ Token cache is keyed by app_id for multi-tenant safety.
 from __future__ import annotations
 
 import os
+import sys
 from datetime import datetime, timezone
 from typing import Any
 
@@ -71,8 +72,12 @@ async def _load_credentials(
                     "app_secret": app_secret,
                     "user_open_id": user_open_id,
                 }
-        except Exception:
-            pass  # Fall through to env vars on DB failure.
+        except Exception as exc:
+            print(
+                f"stonex-ops: feishu credentials DB lookup failed for "
+                f"tenant={tenant}: {exc}",
+                file=sys.stderr,
+            )
 
     # Fallback to environment variables.
     return {

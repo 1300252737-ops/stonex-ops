@@ -227,8 +227,12 @@ async def _run_alert(
             readonly_database_url=readonly_database_url,
             readonly_database_url_file=readonly_database_url_file,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        print(
+            f"stonex-ops: DB URL resolution failed, "
+            f"falling back to env vars: {exc}",
+            file=sys.stderr,
+        )
 
     result = await run_probe(stonx_bin, env, path, tenant=tenant)
     connections = result.get("connections", [])
