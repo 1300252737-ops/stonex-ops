@@ -151,6 +151,8 @@ def main() -> None:
             path=path,
             tenant=args.tenant,
             target=getattr(args, "target", None),
+            readonly_database_url=args.readonly_database_url,
+            readonly_database_url_file=args.readonly_database_url_file,
         ))
         sys.exit(0)
 
@@ -208,11 +210,29 @@ async def _run_alert(
     path: str,
     tenant: str,
     target: list[str] | None = None,
+    readonly_database_url: str | None = None,
+    readonly_database_url_file: str | None = None,
 ) -> None:
     """Probe connections and publish alerts on failure."""
-    from stonex_ops.tools.notification_publish import ready
+    from stonex_ops.db import resolve_readonly_database_url
     from stonex_ops.tools.notification_publish import run as run_publish
     from stonex_ops.tools.probe_connections import run as run_probe
+
+    # Resolve DB URL for credential lookup (passes through to env var fallback on failure).
+    db_url: str | None = None
+    try:
+        db_url = resolve_readonly_database_url(
+            path=path,
+            env=env,
+            readonly_database_url=readonly_database_url,
+            readonly_database_url_file=readonly_database_url_file,
+        )
+    except Exception as exc:
+        print(
+            f"stonex-ops: DB URL resolution failed, "
+            f"falling back to env vars: {exc}",
+            file=sys.stderr,
+        )
 
     result = await run_probe(stonx_bin, env, path, tenant=tenant)
     connections = result.get("connections", [])
@@ -222,17 +242,13 @@ async def _run_alert(
         print("probe: all connections ok — no alert needed", file=sys.stderr)
         return
 
-    if not ready():
-        print(
-            "probe: feishu channel not configured — skipping publish",
-            file=sys.stderr,
-        )
-        return
-
     scopes_list = result.get("scopes") or []
     tag = (scopes_list[0].get("tenant_tag") if scopes_list else None)
     tag = tag or tenant
-    outcome = await run_publish(tenant, tag, connections, target)
+    outcome = await run_publish(
+        tenant, tag, connections, target,
+        readonly_database_url=db_url,
+    )
     if "status" in outcome:
         # publish found no data-source problems after filtering
         print(

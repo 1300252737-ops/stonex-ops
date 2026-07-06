@@ -295,7 +295,10 @@ async def _execute_tool(
         tenant_name = _require_string(arguments, "tenant_name")
         connections = arguments.get("connections", [])
         target = arguments.get("target")
-        return await tools.notification_publish(tenant, tenant_name, connections, target)
+        return await tools.notification_publish(
+            tenant, tenant_name, connections, target,
+            readonly_database_url=state.readonly_database_url,
+        )
 
     else:
         raise ValueError(f"unknown tool: {name}")
