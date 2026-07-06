@@ -10,11 +10,11 @@ Token cache is keyed by app_id for multi-tenant safety.
 from __future__ import annotations
 
 import os
-import re
 from datetime import datetime, timezone
 from typing import Any
 
 from stonex_ops.channels.feishu import build_alert_card, get_tenant_access_token, send_card
+from stonex_ops.whitelist import is_safe_identity
 
 _DATA_SOURCE_IDS = frozenset({"xhs-api", "xhs-live", "jst", "wangdian"})
 
@@ -25,15 +25,8 @@ _PROVIDER_MAP: dict[str, str] = {
     "wangdian": "ERP · 旺店通",
 }
 
-_IDENTITY_RE = re.compile(r"^[a-zA-Z0-9\-_]{1,128}$")
-
 # Token cache keyed by app_id.
 _token_cache: dict[str, tuple[str, float]] = {}
-
-
-def _is_safe_identity(value: str) -> bool:
-    """Validate tenant identity before embedding in SQL."""
-    return bool(_IDENTITY_RE.match(value))
 
 
 async def _load_credentials(
@@ -41,7 +34,7 @@ async def _load_credentials(
     tenant: str,
 ) -> dict[str, str]:
     """Load Feishu credentials from `ops.feishu_connections`, falling back to env vars."""
-    if readonly_database_url and _is_safe_identity(tenant):
+    if readonly_database_url and is_safe_identity(tenant):
         try:
             from stonex_ops.db import execute_sql
 
@@ -57,9 +50,9 @@ async def _load_credentials(
             rows = result.get("rows", [])
             if rows:
                 return {
-                    "app_id": (rows[0][0] or "").strip(),
-                    "app_secret": (rows[0][1] or "").strip(),
-                    "user_open_id": (rows[0][2] or "").strip(),
+                    "app_id": (rows[0][0] or os.getenv("FEISHU_APP_ID", "")).strip(),
+                    "app_secret": (rows[0][1] or os.getenv("FEISHU_APP_SECRET", "")).strip(),
+                    "user_open_id": (rows[0][2] or os.getenv("FEISHU_USER_OPEN_ID", "")).strip(),
                 }
         except Exception:
             pass  # Fall through to env vars on DB failure.
@@ -256,7 +249,7 @@ def _detail(status: str, reason: str, message: str, checked_at: str, shop: str =
     suffix = f" ({shop})" if shop else ""
     if status == "ok":
         ts = checked_at[11:16] if len(checked_at) >= 16 else checked_at
-        return f"正常 · {ts}{suffix}"
+        return f"OK · {ts}{suffix}"
     if reason and message:
         return f"{reason}: {message}{suffix}"
-    return (message or reason or "异常") + suffix
+    return (message or reason or "Error") + suffix
