@@ -215,6 +215,7 @@ async def _run_alert(
 ) -> None:
     """Probe connections and publish alerts on failure."""
     from stonex_ops.db import resolve_readonly_database_url
+    from stonex_ops.tools.notification_publish import ready
     from stonex_ops.tools.notification_publish import run as run_publish
     from stonex_ops.tools.probe_connections import run as run_probe
 
@@ -236,6 +237,13 @@ async def _run_alert(
 
     if problem_count == 0:
         print("probe: all connections ok — no alert needed", file=sys.stderr)
+        return
+
+    if not await ready(db_url, tenant):
+        print(
+            "probe: feishu channel not configured — skipping publish",
+            file=sys.stderr,
+        )
         return
 
     scopes_list = result.get("scopes") or []
