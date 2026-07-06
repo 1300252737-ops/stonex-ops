@@ -1,20 +1,16 @@
-"""notification_publish: explicitly send a notification via a channel.
-
-Credentials are read from `ops.feishu_connections` when a DB connection is
-available, falling back to environment variables (FEISHU_APP_ID,
-FEISHU_APP_SECRET, FEISHU_USER_OPEN_ID, FEISHU_CHAT_ID).
-
-Token cache is keyed by app_id for multi-tenant safety.
-"""
+"""notification_publish: explicitly send a notification via a channel."""
 
 from __future__ import annotations
 
 import os
-import re
 from datetime import datetime, timezone
 from typing import Any
 
 from stonex_ops.channels.feishu import build_alert_card, get_tenant_access_token, send_card
+
+# Feishu credentials read once at process boundary.
+_APP_ID = os.getenv("FEISHU_APP_ID", "").strip()
+_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "").strip()
 
 _DATA_SOURCE_IDS = frozenset({"xhs-api", "xhs-live", "jst", "wangdian"})
 
@@ -25,60 +21,10 @@ _PROVIDER_MAP: dict[str, str] = {
     "wangdian": "ERP · 旺店通",
 }
 
-_IDENTITY_RE = re.compile(r"^[a-zA-Z0-9\-_]{1,128}$")
 
-# Token cache keyed by app_id.
-_token_cache: dict[str, tuple[str, float]] = {}
-
-
-def _is_safe_identity(value: str) -> bool:
-    """Validate tenant identity before embedding in SQL."""
-    return bool(_IDENTITY_RE.match(value))
-
-
-async def _load_credentials(
-    readonly_database_url: str | None,
-    tenant: str,
-) -> dict[str, str]:
-    """Load Feishu credentials from `ops.feishu_connections`, falling back to env vars."""
-    if readonly_database_url and _is_safe_identity(tenant):
-        try:
-            from stonex_ops.db import execute_sql
-
-            result = await execute_sql(
-                readonly_database_url,
-                sql=(
-                    "SELECT app_id, app_secret, user_open_id "
-                    "FROM ops.feishu_connections "
-                    f"WHERE tenant_id = '{tenant}'"
-                ),
-                max_rows=1,
-            )
-            rows = result.get("rows", [])
-            if rows:
-                return {
-                    "app_id": (rows[0][0] or "").strip(),
-                    "app_secret": (rows[0][1] or "").strip(),
-                    "user_open_id": (rows[0][2] or "").strip(),
-                }
-        except Exception:
-            pass  # Fall through to env vars on DB failure.
-
-    # Fallback to environment variables.
-    return {
-        "app_id": os.getenv("FEISHU_APP_ID", "").strip(),
-        "app_secret": os.getenv("FEISHU_APP_SECRET", "").strip(),
-        "user_open_id": os.getenv("FEISHU_USER_OPEN_ID", "").strip(),
-    }
-
-
-async def ready(
-    readonly_database_url: str | None = None,
-    tenant: str = "",
-) -> bool:
-    """Check if Feishu channel credentials are available."""
-    creds = await _load_credentials(readonly_database_url, tenant)
-    return bool(creds["app_id"] and creds["app_secret"])
+def ready() -> bool:
+    """Check if the Feishu channel credentials are configured."""
+    return bool(_APP_ID and _APP_SECRET)
 
 
 async def run(
@@ -87,28 +33,19 @@ async def run(
     connections: list[dict[str, Any]],
     target: list[str] | None = None,
     manage_base_url: str = "https://stonex.yuece.tech",
-    readonly_database_url: str | None = None,
 ) -> dict[str, Any]:
     """Send connection alert cards via Feishu.
 
     Args:
-        tenant: Tenant identity.
-        tenant_name: Display name for the tenant.
-        connections: Connection probe results. Each element:
-            {connection_id, status, reason_code, message, checked_at}.
-        target: Recipient IDs: open_id (ou_) for users, chat_id (oc_) for groups.
-            Defaults to user_open_id from credentials + FEISHU_CHAT_ID env var.
-        manage_base_url: Base URL for the manage page link.
-        readonly_database_url: Optional PostgreSQL URL for reading credentials
-            from `ops.feishu_connections` instead of env vars.
+        target: List of open_id (ou_) or chat_id (oc_) to send to.
+                Defaults to FEISHU_USER_OPEN_ID + FEISHU_CHAT_ID env vars.
 
     Returns {"cards": [...]} on success, {"error": "..."} on failure.
     """
-    creds = await _load_credentials(readonly_database_url, tenant)
-    if not creds["app_id"] or not creds["app_secret"]:
-        return {"error": "Feishu channel not configured"}
+    if not ready():
+        return {"error": "Feishu channel not configured (missing env vars)"}
 
-    targets = _resolve_targets(target, user_open_id=creds["user_open_id"])
+    targets = _resolve_targets(target)
     if not targets:
         return {"error": "no recipients configured"}
 
@@ -131,7 +68,7 @@ async def run(
         return {"status": "ok", "message": "all connections healthy"}
 
     try:
-        token = await _get_token_cached(creds["app_id"], creds["app_secret"])
+        token = await _get_token_cached()
     except Exception as exc:
         return {"error": f"feishu auth failed: {exc}"}
 
@@ -162,19 +99,15 @@ async def run(
 
 # ── target resolution ──
 
-
-def _resolve_targets(
-    target: list[str] | None,
-    user_open_id: str = "",
-) -> list[str]:
+def _resolve_targets(target: list[str] | None) -> list[str]:
     if target:
         return [t.strip() for t in target if t.strip()]
+    # Backwards-compatible fallback to env vars.
     result: list[str] = []
-    for uid in user_open_id.split(","):
+    for uid in os.getenv("FEISHU_USER_OPEN_ID", "").split(","):
         uid = uid.strip()
         if uid:
             result.append(uid)
-    # chat_id only comes from env var (not stored in feishu_connections table).
     chat = os.getenv("FEISHU_CHAT_ID", "").strip()
     if chat:
         result.append(chat)
@@ -183,27 +116,24 @@ def _resolve_targets(
 
 # ── token cache ──
 
+_token: str | None = None
+_token_ts: float = 0.0
 
-async def _get_token_cached(app_id: str, app_secret: str) -> str:
+
+async def _get_token_cached() -> str:
+    global _token, _token_ts
     now_ts = datetime.now(timezone.utc).timestamp()
-    entry = _token_cache.get(app_id)
-    if entry:
-        token, ts = entry
-        if (now_ts - ts) < 3600:
-            return token
-    token = await get_tenant_access_token(app_id, app_secret)
-    _token_cache[app_id] = (token, now_ts)
-    return token
+    if _token and (now_ts - _token_ts) < 3600:
+        return _token
+    _token = await get_tenant_access_token(_APP_ID, _APP_SECRET)
+    _token_ts = now_ts
+    return _token
 
 
 # ── send ──
 
-
 async def _send_with_retry(
-    token: str,
-    receive_id_type: str,
-    receive_id: str,
-    card: dict[str, Any],
+    token: str, receive_id_type: str, receive_id: str, card: dict[str, Any]
 ) -> str:
     last_err = ""
     for attempt in range(3):
@@ -213,13 +143,11 @@ async def _send_with_retry(
             last_err = str(exc)
             if attempt < 2:
                 import asyncio
-
                 await asyncio.sleep(1)
     return f"error after 3 attempts: {last_err}"
 
 
 # ── helpers ──
-
 
 def _is_unconfigured(c: dict[str, Any]) -> bool:
     status = c.get("status", "")
@@ -256,7 +184,7 @@ def _detail(status: str, reason: str, message: str, checked_at: str, shop: str =
     suffix = f" ({shop})" if shop else ""
     if status == "ok":
         ts = checked_at[11:16] if len(checked_at) >= 16 else checked_at
-        return f"正常 · {ts}{suffix}"
+        return f"正常 \xb7 {ts}{suffix}"
     if reason and message:
         return f"{reason}: {message}{suffix}"
     return (message or reason or "异常") + suffix
