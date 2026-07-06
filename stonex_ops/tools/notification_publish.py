@@ -33,26 +33,43 @@ async def _load_credentials(
     readonly_database_url: str | None,
     tenant: str,
 ) -> dict[str, str]:
-    """Load Feishu credentials from `ops.feishu_connections`, falling back to env vars."""
+    """Load Feishu credentials from `ops.feishu_connections`, falling back to env vars.
+
+    Uses a direct psycopg connection to bypass the SQL executor's output redaction
+    (which would redact app_secret because the column name matches the "secret" pattern).
+    """
     if readonly_database_url and is_safe_identity(tenant):
         try:
-            from stonex_ops.db import execute_sql
+            import psycopg
+            from psycopg.rows import dict_row
 
-            result = await execute_sql(
-                readonly_database_url,
-                sql=(
-                    "SELECT app_id, app_secret, user_open_id "
-                    "FROM ops.feishu_connections "
-                    f"WHERE tenant_id = '{tenant}'"
-                ),
-                max_rows=1,
+            conn = await psycopg.AsyncConnection.connect(
+                readonly_database_url, autocommit=True,
             )
-            rows = result.get("rows", [])
-            if rows:
+            try:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        "SELECT app_id, app_secret, user_open_id "
+                        "FROM ops.feishu_connections "
+                        "WHERE tenant_id = %s",
+                        (tenant,),
+                    )
+                    row = await cur.fetchone()
+            finally:
+                await conn.close()
+
+            if row:
+                app_id = (row.get("app_id") or os.getenv("FEISHU_APP_ID", "")).strip()
+                app_secret = (
+                    row.get("app_secret") or os.getenv("FEISHU_APP_SECRET", "")
+                ).strip()
+                user_open_id = (
+                    row.get("user_open_id") or os.getenv("FEISHU_USER_OPEN_ID", "")
+                ).strip()
                 return {
-                    "app_id": (rows[0][0] or os.getenv("FEISHU_APP_ID", "")).strip(),
-                    "app_secret": (rows[0][1] or os.getenv("FEISHU_APP_SECRET", "")).strip(),
-                    "user_open_id": (rows[0][2] or os.getenv("FEISHU_USER_OPEN_ID", "")).strip(),
+                    "app_id": app_id,
+                    "app_secret": app_secret,
+                    "user_open_id": user_open_id,
                 }
         except Exception:
             pass  # Fall through to env vars on DB failure.
