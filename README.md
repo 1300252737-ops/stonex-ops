@@ -49,6 +49,7 @@ ssh -T x-001@47.99.40.217 /stonex/bin/stonex-ops mcp \
   --stonx-bin /stonex/bin/stonx \
   --env main \
   --path /stonex \
+  --readonly-database-url-file /stonex/ops/main-readonly-database-url \
   --audit-file /stonex/ops/logs/audit.jsonl
 ```
 
@@ -65,6 +66,7 @@ Claude Code MCP config:
         "--stonx-bin", "/stonex/bin/stonx",
         "--env", "main",
         "--path", "/stonex",
+        "--readonly-database-url-file", "/stonex/ops/main-readonly-database-url",
         "--audit-file", "/stonex/ops/logs/audit.jsonl"
       ]
     }
@@ -133,6 +135,11 @@ tar -xzf "$release/site.tar.gz" -C "$release/site"
 ln -sfn "$release" /stonex/ops/current
 ln -sfn /stonex/ops/current/stonex-ops /stonex/bin/stonex-ops
 ```
+
+The production main wrapper sets
+`STONEX_OPS_READONLY_DATABASE_URL_FILE=/stonex/ops/main-readonly-database-url`
+by default. Keep `/stonex/main/config.toml` private to the `stonex` runtime
+user.
 
 ## Testing
 
