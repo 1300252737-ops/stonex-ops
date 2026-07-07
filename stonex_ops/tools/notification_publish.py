@@ -232,9 +232,13 @@ async def _send_with_retry(
 
 
 def _is_unconfigured(c: dict[str, Any]) -> bool:
-    status = c.get("status", "")
-    reason = c.get("reason_code", "")
-    return status == "config_error" or (bool(reason) and "missing" in reason.lower())
+    """True when a data-source connection was never configured (not a real failure).
+
+    Only status='config_error' means the provider is intentionally absent.
+    Reason codes like xhs_auth_missing or jst_auth_missing are auth failures,
+    not configuration absences — they must still trigger alerts.
+    """
+    return c.get("status", "") == "config_error"
 
 
 def _format_connections(
