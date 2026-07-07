@@ -236,7 +236,7 @@ jobs:
           TMPFILE=$(mktemp)
           crontab -l 2>/dev/null > "$TMPFILE" || true
           sed -i '/stonex-ops alert/d' "$TMPFILE"
-          echo '5 * * * * /stonex/bin/stonex-ops alert --tenant default --env main --path /stonex --stonx-bin /stonex/bin/stonx >> /stonex/ops/logs/alert.log 2>&1' >> "$TMPFILE"
+          echo '5 * * * * FEISHU_CHAT_ID=oc_e744a50d0dc7d008447598cf877da64f /stonex/bin/stonex-ops alert --tenant default --env main --path /stonex --stonx-bin /stonex/bin/stonx >> /stonex/ops/logs/alert.log 2>&1' >> "$TMPFILE"
           mkdir -p /stonex/ops/logs
           crontab "$TMPFILE"
           rm -f "$TMPFILE"
