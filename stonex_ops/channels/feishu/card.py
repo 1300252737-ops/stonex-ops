@@ -37,8 +37,8 @@ def build_alert_card(
             "subtitle": {
                 "tag": "plain_text",
                 "content": (
-                    f"{tenant_name} ({tenant}) \xb7 {probe_time}"
-                    f" \xb7 {problem_count}/{check_count} 异常"
+                    f"{tenant_name} ({tenant}) · {probe_time}"
+                    f" · {problem_count}/{check_count} issues"
                 ),
             },
             "template": header,

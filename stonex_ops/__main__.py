@@ -227,7 +227,7 @@ async def _run_alert(
             readonly_database_url=readonly_database_url,
             readonly_database_url_file=readonly_database_url_file,
         )
-    except Exception as exc:
+    except (ValueError, FileNotFoundError, OSError) as exc:
         print(
             f"stonex-ops: DB URL resolution failed, "
             f"falling back to env vars: {exc}",
@@ -249,8 +249,7 @@ async def _run_alert(
         tenant, tag, connections, target,
         readonly_database_url=db_url,
     )
-    if "status" in outcome:
-        # publish found no data-source problems after filtering
+    if outcome.get("healthy"):
         print(
             f"probe: {problem_count}/{result.get('check_count', '?')} raw problems"
             f" — data sources all healthy, no alert sent",

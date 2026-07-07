@@ -9,10 +9,15 @@ Token cache is keyed by app_id for multi-tenant safety.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from datetime import datetime, timezone
 from typing import Any
+
+import httpx
+import psycopg
+from psycopg.rows import dict_row
 
 from stonex_ops.channels.feishu import build_alert_card, get_tenant_access_token, send_card
 from stonex_ops.whitelist import is_safe_identity
@@ -29,6 +34,8 @@ _PROVIDER_MAP: dict[str, str] = {
 # Token cache keyed by app_id.
 _token_cache: dict[str, tuple[str, float]] = {}
 
+_DB_CONNECT_TIMEOUT = 5.0
+
 
 async def _load_credentials(
     readonly_database_url: str | None,
@@ -38,14 +45,14 @@ async def _load_credentials(
 
     Uses a direct psycopg connection to bypass the SQL executor's output redaction
     (which would redact app_secret because the column name matches the "secret" pattern).
+    When a DB row exists, all fields must be non-empty — partial rows are treated as
+    missing (whole-row fallback, not per-field).
     """
     if readonly_database_url and is_safe_identity(tenant):
         try:
-            import psycopg
-            from psycopg.rows import dict_row
-
-            conn = await psycopg.AsyncConnection.connect(
-                readonly_database_url, autocommit=True,
+            conn = await asyncio.wait_for(
+                psycopg.AsyncConnection.connect(readonly_database_url, autocommit=True),
+                timeout=_DB_CONNECT_TIMEOUT,
             )
             try:
                 async with conn.cursor(row_factory=dict_row) as cur:
@@ -60,19 +67,16 @@ async def _load_credentials(
                 await conn.close()
 
             if row:
-                app_id = (row.get("app_id") or os.getenv("FEISHU_APP_ID", "")).strip()
-                app_secret = (
-                    row.get("app_secret") or os.getenv("FEISHU_APP_SECRET", "")
-                ).strip()
-                user_open_id = (
-                    row.get("user_open_id") or os.getenv("FEISHU_USER_OPEN_ID", "")
-                ).strip()
-                return {
-                    "app_id": app_id,
-                    "app_secret": app_secret,
-                    "user_open_id": user_open_id,
-                }
-        except Exception as exc:
+                app_id = (row.get("app_id") or "").strip()
+                app_secret = (row.get("app_secret") or "").strip()
+                user_open_id = (row.get("user_open_id") or "").strip()
+                if app_id and app_secret:
+                    return {
+                        "app_id": app_id,
+                        "app_secret": app_secret,
+                        "user_open_id": user_open_id,
+                    }
+        except (psycopg.OperationalError, psycopg.InterfaceError, OSError) as exc:
             print(
                 f"stonex-ops: feishu credentials DB lookup failed for "
                 f"tenant={tenant}: {exc}",
@@ -87,15 +91,6 @@ async def _load_credentials(
     }
 
 
-async def ready(
-    readonly_database_url: str | None = None,
-    tenant: str = "",
-) -> bool:
-    """Check if Feishu channel credentials are available."""
-    creds = await _load_credentials(readonly_database_url, tenant)
-    return bool(creds["app_id"] and creds["app_secret"])
-
-
 async def run(
     tenant: str,
     tenant_name: str,
@@ -106,18 +101,9 @@ async def run(
 ) -> dict[str, Any]:
     """Send connection alert cards via Feishu.
 
-    Args:
-        tenant: Tenant identity.
-        tenant_name: Display name for the tenant.
-        connections: Connection probe results. Each element:
-            {connection_id, status, reason_code, message, checked_at}.
-        target: Recipient IDs: open_id (ou_) for users, chat_id (oc_) for groups.
-            Defaults to user_open_id from credentials + FEISHU_CHAT_ID env var.
-        manage_base_url: Base URL for the manage page link.
-        readonly_database_url: Optional PostgreSQL URL for reading credentials
-            from `ops.feishu_connections` instead of env vars.
-
-    Returns {"cards": [...]} on success, {"error": "..."} on failure.
+    Returns {"cards": [...]} on success, {"healthy": True} when all data-sources
+    are healthy (no alert needed), or {"error": "..."} on failure.
+    Callers must check for "cards" (alert sent), "healthy" (skipped), or "error".
     """
     creds = await _load_credentials(readonly_database_url, tenant)
     if not creds["app_id"] or not creds["app_secret"]:
@@ -143,7 +129,7 @@ async def run(
         if any(c.get("status") != "ok" for c in conns)
     }
     if not problem_shops:
-        return {"status": "ok", "message": "all connections healthy"}
+        return {"healthy": True}
 
     try:
         token = await _get_token_cached(creds["app_id"], creds["app_secret"])
@@ -220,16 +206,24 @@ async def _send_with_retry(
     receive_id: str,
     card: dict[str, Any],
 ) -> str:
+    """Send a card with retry on transient network errors only.
+
+    Network errors (timeout, connection refused, DNS failure) are retried up
+    to 3 times with a 1-second delay. Non-transient errors (Feishu API
+    rejection, malformed card) fail immediately.
+    """
     last_err = ""
     for attempt in range(3):
         try:
             return await send_card(token, receive_id_type, receive_id, card)
-        except Exception as exc:
+        except httpx.HTTPError as exc:
+            # Transient: network/timeout/DNS — retry.
             last_err = str(exc)
             if attempt < 2:
-                import asyncio
-
                 await asyncio.sleep(1)
+        except Exception as exc:
+            # Non-transient: API rejection, malformed payload — do not retry.
+            return f"error: {exc}"
     return f"error after 3 attempts: {last_err}"
 
 
