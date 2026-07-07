@@ -13,10 +13,20 @@ Read-only — does not send notifications.
 from __future__ import annotations
 
 import json
+import sys
 from typing import Any, Optional
 
 from stonex_ops.executor import execute
 from stonex_ops.whitelist import Probe, ProbeAll
+
+_EMPTY_RESULT: dict[str, Any] = {
+    "scope": None,
+    "scopes": [],
+    "result": "failed",
+    "check_count": 0,
+    "problem_count": 0,
+    "connections": [],
+}
 
 
 async def run(
@@ -32,7 +42,16 @@ async def run(
         cmd = ProbeAll()
 
     output = await execute(stonx_bin, env, path, cmd)
-    parsed = json.loads(output)
+
+    try:
+        parsed = json.loads(output)
+    except json.JSONDecodeError:
+        print(
+            f"stonex-ops: probe returned invalid JSON "
+            f"(length={len(output)}): {output[:300]!r}",
+            file=sys.stderr,
+        )
+        return dict(_EMPTY_RESULT)
 
     # Collect connections from all scopes, injecting tenant/shop_id context.
     all_connections: list[dict[str, Any]] = []
