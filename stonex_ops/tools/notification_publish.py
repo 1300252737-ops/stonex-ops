@@ -45,8 +45,8 @@ async def _load_credentials(
 
     Uses a direct psycopg connection to bypass the SQL executor's output redaction
     (which would redact app_secret because the column name matches the "secret" pattern).
-    When a DB row exists, all fields must be non-empty — partial rows are treated as
-    missing (whole-row fallback, not per-field).
+    app_secret is always read from the FEISHU_APP_SECRET env var because stonx encrypts
+    it at rest via the crypto key — stonex-ops cannot decrypt it.
     """
     if readonly_database_url and is_safe_identity(tenant):
         try:
@@ -57,7 +57,7 @@ async def _load_credentials(
             try:
                 async with conn.cursor(row_factory=dict_row) as cur:
                     await cur.execute(
-                        "SELECT app_id, app_secret, user_open_id "
+                        "SELECT app_id, user_open_id "
                         "FROM ops.feishu_connections "
                         "WHERE tenant_id = %s",
                         (tenant,),
@@ -68,8 +68,9 @@ async def _load_credentials(
 
             if row:
                 app_id = (row.get("app_id") or "").strip()
-                app_secret = (row.get("app_secret") or "").strip()
                 user_open_id = (row.get("user_open_id") or "").strip()
+                # app_secret cannot come from DB — stonx encrypts it at rest.
+                app_secret = os.getenv("FEISHU_APP_SECRET", "").strip()
                 if app_id and app_secret:
                     return {
                         "app_id": app_id,
