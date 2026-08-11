@@ -415,7 +415,7 @@ async def run_mcp_server(
     try:
         version_output = await execute(stonx_bin, env, path, StonxVersion())
         print(
-            f"startup check: stonx version ok ({version_output.strip()})",
+            f"startup check: stonx version ok ({version_output.stdout.strip()})",
             file=sys.stderr,
         )
     except Exception as exc:

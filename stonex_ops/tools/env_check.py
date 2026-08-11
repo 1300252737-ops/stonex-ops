@@ -23,7 +23,7 @@ async def run(stonx_bin: str, env: str, path: str) -> dict[str, Any]:
 
     try:
         output = await execute(stonx_bin, env, path, StonxVersion())
-        result["stonx_version"] = output.strip()
+        result["stonx_version"] = output.stdout.strip()
         result["stonx_reachable"] = True
     except Exception:
         pass

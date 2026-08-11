@@ -5,12 +5,14 @@ Security measures:
 - Tiered timeouts to prevent hangs; hung processes are killed and reaped.
 - Output size limit to prevent OOM.
 - Probe commands return stdout even on non-zero exit (diagnostics are in JSON).
-- Stderr is never exposed externally.
+- Stderr is captured and returned alongside stdout so callers can surface
+  probe errors (e.g. missing secrets) that prevent JSON output.
 """
 
 from __future__ import annotations
 
 import asyncio
+from typing import NamedTuple
 
 from stonex_ops.whitelist import AllowedCommand, op_kind
 
@@ -22,6 +24,12 @@ TIMEOUTS: dict[str, float] = {
     "read": 15.0,
     "probe": 45.0,
 }
+
+
+class CommandOutput(NamedTuple):
+    """Result of a subprocess execution."""
+    stdout: str
+    stderr: str
 
 
 class ExecutionError(Exception):
@@ -36,8 +44,8 @@ async def execute(
     env: str,
     path: str,
     command: AllowedCommand,
-) -> str:
-    """Execute an allowlisted command. Returns the stdout string.
+) -> CommandOutput:
+    """Execute an allowlisted command. Returns stdout and stderr.
 
     Raises:
         ValueError: parameter validation failed.
@@ -86,15 +94,16 @@ async def execute(
             f"stonx output too large: {len(stdout)} bytes (max {MAX_OUTPUT_BYTES})"
         )
 
+    stderr = stderr_bytes.decode("utf-8", errors="replace")
+
     # Probe may exit non-zero when diagnostics find problems, but
     # stdout still contains the full structured JSON.
     is_probe = op_kind(command) == "probe"
 
     if proc.returncode != 0 and not is_probe:
-        stderr = stderr_bytes.decode("utf-8", errors="replace")
         stderr_summary = "; ".join(stderr.splitlines()[:3])
         raise ExecutionError(
             f"stonx exited with {proc.returncode}: {stderr_summary}"
         )
 
-    return stdout
+    return CommandOutput(stdout, stderr)

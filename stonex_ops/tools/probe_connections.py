@@ -44,14 +44,15 @@ async def run(
     output = await execute(stonx_bin, env, path, cmd)
 
     try:
-        parsed = json.loads(output)
+        parsed = json.loads(output.stdout)
     except json.JSONDecodeError:
         print(
             f"stonex-ops: probe returned invalid JSON "
-            f"(length={len(output)}): {output[:300]!r}",
+            f"(length={len(output.stdout)}): {output.stdout[:300]!r}",
             file=sys.stderr,
         )
-        return dict(_EMPTY_RESULT)
+        error = output.stderr.strip() or "stonx probe produced no JSON output"
+        return {**_EMPTY_RESULT, "error": error}
 
     # Collect connections from all scopes, injecting tenant/shop_id context.
     all_connections: list[dict[str, Any]] = []
